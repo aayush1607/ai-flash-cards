@@ -76,7 +76,7 @@ def run_scripts():
 
 def main():
     """Main test runner"""
-    print("AIFlash Test Suite")
+    print("AI Flash Cards Test Suite")
     print("=" * 50)
     
     # Run unit tests

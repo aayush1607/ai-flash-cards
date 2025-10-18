@@ -1,6 +1,28 @@
-# AIFlash MVP
+# AI Flash Cards
 
-AI Flash — research-grade AI breakthroughs & model releases, fast.
+**Lightning-fast AI insights, sourced fresh daily.**
+
+## 🎯 The Problem
+
+The AI landscape is overwhelming. With hundreds of blogs, research papers, and news sources covering AI breakthroughs, it's nearly impossible to stay updated and identify what truly matters. Information overload makes it difficult to:
+
+- **Stay ahead** of the latest AI developments
+- **Filter signal from noise** in the vast AI content landscape  
+- **Find relevant information** on specific AI topics quickly
+- **Consume content efficiently** without spending hours reading
+
+## 💡 The Solution
+
+AI Flash Cards delivers latest news on AI breakthroughs & releases as swipeable cards. 
+
+There are hundreds or thousands of blogs on AI providing news about AI releases and what people are doing. This project aims at solving this problem. It utilizes RSS feeds from trusted sources like Hugging Face, OpenAI, Hacker News, DeepMind, Microsoft, NVIDIA, AWS, arXiv, MIT.edu - fetches latest blogs, applies LLM powered filtering to figure out relevance and serves you the top 10 most relevant articles every day. Also provides search functionality to provide latest on any AI-related topic - this is done with help of semantic search on precomputed vectors on sources.
+
+## ✨ What Makes It Special
+
+- **🎯 Smart AI Filtering**: Automatically filters hundreds of AI sources to find the most relevant content
+- **⚡ Lightning Fast**: Get insights in seconds, not hours of reading through countless blogs
+- **🤖 AI-Powered Summaries**: Each card includes TL;DR, summary, and "why it matters"
+- **🔄 Daily Updates**: Fresh content sourced from 9+ trusted AI sources (RSS Feeds)
 
 ## Quick Start
 
@@ -15,7 +37,7 @@ AI Flash — research-grade AI breakthroughs & model releases, fast.
 1. **Clone and setup**:
    ```bash
    git clone <repo>
-   cd AIFlash
+   cd AI-Flash-Cards
    python -m venv venv
    source venv/bin/activate  # Windows: venv\Scripts\activate
    pip install -r requirements.txt
@@ -63,17 +85,18 @@ AI Flash — research-grade AI breakthroughs & model releases, fast.
 
 ## API Endpoints
 
-- `GET /api/morning-brief` - Daily top AI news
-- `GET /api/topic-feed?q={query}` - Search by topic
-- `GET /api/ingest` - Manual ingestion trigger (dev only)
+- `GET /api/morning-brief` - Daily top 10 most relevant AI articles as swipeable cards
+- `GET /api/topic-feed?q={query}` - Semantic search for AI insights on any topic
+- `GET /api/health` - System health check
+- `GET /api/dev-stats` - Development statistics (dev only)
 
 ## Development
 
 ### Project Structure
 ```
-AIFlash/
+AI-Flash-Cards/
 ├── backend/           # FastAPI application
-├── frontend/         # Static web files
+├── frontend/         # Static web files (HTML/CSS/JS)
 ├── test/             # Test suite
 │   ├── unit/         # Unit tests
 │   ├── integration/  # Integration tests
@@ -103,5 +126,8 @@ python test/scripts/run_ingestion.py
 ```
 
 ### Key Features
-- Daily Morning Brief (top 10 AI news)
-- Topic-based search with semantic retrieval
+- **Daily Morning Brief**: Top 10 most relevant AI articles delivered as swipeable cards
+- **Smart AI Filtering**: Automatically filters hundreds of AI sources to find relevance
+- **Semantic Search**: Find relevant articles on any AI topic using vector search
+- **AI-Powered Summaries**: Each card includes TL;DR, summary, and "why it matters"
+- **Trusted Sources**: Content from Hugging Face, OpenAI, Hacker News, DeepMind, Microsoft, NVIDIA, AWS, arXiv, MIT.edu

@@ -16,8 +16,8 @@ from backend.scheduler import daily_scheduler
 
 # Create FastAPI app
 app = FastAPI(
-    title="AIFlash API",
-    description="AI Flash — research-grade AI breakthroughs & model releases, fast.",
+    title="AI Flash Cards API",
+    description="Lightning-fast AI insights, sourced fresh daily",
     version="1.0.0",
     docs_url="/api/docs",
     redoc_url="/api/redoc"
@@ -295,7 +295,7 @@ app.mount("/static", StaticFiles(directory="frontend"), name="static")
 async def startup_event():
     """Application startup event"""
     try:
-        logger.info("Starting AIFlash application...")
+        logger.info("Starting AI Flash Cards application...")
         
         # Start the scheduler
         daily_scheduler.start()
@@ -306,7 +306,7 @@ async def startup_event():
         logger.info(f"RSS sources: 3")
         logger.info(f"Top N morning brief: {config.morning_brief_top_n}")
         
-        logger.info("AIFlash application started successfully")
+        logger.info("AI Flash Cards application started successfully")
         
     except Exception as e:
         logger.error(f"Error during startup: {e}")

@@ -1,6 +1,6 @@
-# AIFlash Test Suite
+# AI Flash Cards Test Suite
 
-This directory contains all tests and utility scripts for the AIFlash application.
+This directory contains all tests and utility scripts for the AI Flash Cards application.
 
 ## Directory Structure
 
