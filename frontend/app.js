@@ -1,4 +1,4 @@
-// AIFlash Frontend Application
+// AI Flash Cards Frontend Application
 class AIFlashApp {
     constructor() {
         this.currentCards = [];
@@ -6,25 +6,14 @@ class AIFlashApp {
         this.isTopicView = false;
         this.currentTopic = '';
         this.isLoading = false;
-        this.retryCount = 0;
-        this.maxRetries = 3;
-        this.retryDelay = 1000; // 1 second
-        
-        // Initialize the application
         this.init();
     }
 
     async init() {
         try {
-            // Setup event listeners
             this.setupEventListeners();
-            
-            // Load initial morning brief
             await this.loadMorningBrief();
-            
-            // Show keyboard shortcuts help
             this.showKeyboardHelp();
-            
         } catch (error) {
             console.error('Error initializing app:', error);
             this.showError('Failed to initialize application');
@@ -43,67 +32,90 @@ class AIFlashApp {
         });
 
         // Card navigation
-        document.getElementById('nextBtn').addEventListener('click', () => this.nextCard());
-        document.getElementById('prevBtn').addEventListener('click', () => this.prevCard());
-        document.getElementById('nextBtnNav').addEventListener('click', () => this.nextCard());
+        document.getElementById('nextButton').addEventListener('click', () => this.navigateCards(1));
+        document.getElementById('prevButton').addEventListener('click', () => this.navigateCards(-1));
+
+        // Touch/swipe support for mobile
+        this.setupTouchEvents();
 
         // Modal controls
-        document.getElementById('closeModal').addEventListener('click', () => this.closeModal());
-        document.getElementById('modalCloseBtn').addEventListener('click', () => this.closeModal());
         document.getElementById('cardModal').addEventListener('click', (e) => {
-            if (e.target.id === 'cardModal') {
-                this.closeModal();
+            if (e.target.id === 'cardModal' || e.target.classList.contains('modal-close')) {
+                this.closeCardModal();
             }
         });
 
         // Topic view controls
-        document.getElementById('refreshBtn').addEventListener('click', () => this.refreshTopic());
+        document.getElementById('refreshBtn').addEventListener('click', () => this.clearSearch());
 
         // Retry button
         document.getElementById('retryBtn').addEventListener('click', () => this.retry());
 
         // Keyboard shortcuts
         document.addEventListener('keydown', (e) => this.handleKeyboard(e));
+    }
 
-        // Status indicator
-        this.updateStatusIndicator();
+    setupTouchEvents() {
+        const cardContainer = document.getElementById('cardContainer');
+        let startX = 0;
+        let startY = 0;
+        let endX = 0;
+        let endY = 0;
+
+        cardContainer.addEventListener('touchstart', (e) => {
+            startX = e.touches[0].clientX;
+            startY = e.touches[0].clientY;
+        }, { passive: true });
+
+        cardContainer.addEventListener('touchend', (e) => {
+            endX = e.changedTouches[0].clientX;
+            endY = e.changedTouches[0].clientY;
+            
+            const deltaX = endX - startX;
+            const deltaY = endY - startY;
+            
+            // Only trigger swipe if horizontal movement is greater than vertical
+            if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > 50) {
+                if (deltaX > 0) {
+                    // Swipe right - previous card
+                    this.navigateCards(-1);
+                } else {
+                    // Swipe left - next card
+                    this.navigateCards(1);
+                }
+            }
+        }, { passive: true });
     }
 
     async loadMorningBrief() {
+        if (this.isLoading) return;
         try {
             this.showLoading();
             this.isLoading = true;
+            this.isTopicView = false;
+            this.currentTopic = '';
+            this.hideTopicHeader();
 
             const response = await fetch('/api/morning-brief');
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
-
             const data = await response.json();
             this.currentCards = data.items || [];
             this.currentIndex = 0;
-            this.isTopicView = false;
-
-            if (this.currentCards.length === 0) {
-                this.showEmpty();
-            } else {
-                this.renderCurrentCard();
-                this.hideLoading();
-            }
-
+            this.renderCurrentCard();
         } catch (error) {
             console.error('Error loading morning brief:', error);
             this.showError('Failed to load morning brief');
         } finally {
             this.isLoading = false;
+            this.hideLoading();
         }
     }
 
     async handleSearch() {
         const searchInput = document.getElementById('searchInput');
         const query = searchInput.value.trim();
-
-        console.log('Search triggered for:', query);
 
         if (!query) {
             return;
@@ -113,15 +125,12 @@ class AIFlashApp {
             this.showLoading();
             this.isLoading = true;
 
-            console.log('Making API request...');
             const response = await fetch(`/api/topic-feed?q=${encodeURIComponent(query)}`);
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
 
             const data = await response.json();
-            console.log('Search results:', data);
-            
             this.currentCards = data.items || [];
             this.currentIndex = 0;
             this.isTopicView = true;
@@ -133,7 +142,6 @@ class AIFlashApp {
             if (this.currentCards.length === 0) {
                 this.showEmpty();
             } else {
-                console.log('Rendering card:', this.currentCards[0]);
                 this.renderCurrentCard();
                 this.hideLoading();
             }
@@ -146,6 +154,176 @@ class AIFlashApp {
         }
     }
 
+    clearSearch() {
+        const searchInput = document.getElementById('searchInput');
+        searchInput.value = '';
+        
+        this.isTopicView = false;
+        this.currentTopic = '';
+        this.hideTopicHeader();
+        
+        this.loadMorningBrief();
+    }
+
+    renderCurrentCard() {
+        const cardContainer = document.getElementById('cardContainer');
+        cardContainer.innerHTML = '';
+
+        if (this.currentCards.length === 0) {
+            this.showEmpty();
+            return;
+        }
+
+        const card = this.currentCards[this.currentIndex];
+        if (!card) {
+            this.showEmpty();
+            return;
+        }
+
+        // Create card element
+        const cardElement = document.createElement('div');
+        cardElement.className = 'card card-hover';
+        cardElement.innerHTML = `
+            <div class="card-header">
+                <span class="card-source">${card.source}</span>
+                <span class="card-date">${this.formatDate(card.published_at)}</span>
+            </div>
+            <div class="card-title">${card.title}</div>
+            <div class="card-tldr">${card.tl_dr}</div>
+            <div class="card-summary">${card.summary}</div>
+            <div class="card-footer">
+                <div class="card-why-label">Why it matters</div>
+                <div class="card-why-text">${card.why_it_matters}</div>
+            </div>
+        `;
+        cardContainer.appendChild(cardElement);
+
+        this.updateCardCounter();
+        this.hideAllStates();
+    }
+
+    navigateCards(direction) {
+        if (this.isLoading || this.currentCards.length === 0) return;
+
+        this.currentIndex = (this.currentIndex + direction + this.currentCards.length) % this.currentCards.length;
+        this.renderCurrentCard();
+    }
+
+    showCardModal(card) {
+        document.getElementById('modalSource').textContent = card.source;
+        document.getElementById('modalDate').textContent = this.formatDate(card.published_at);
+        document.getElementById('modalTitle').textContent = card.title;
+        document.getElementById('modalTldr').textContent = card.tl_dr;
+        document.getElementById('modalSummary').textContent = card.summary;
+        document.getElementById('modalWhy').textContent = card.why_it_matters;
+
+        // Handle snippet visibility
+        const modalSnippetDiv = document.getElementById('modalSnippet');
+        const modalSnippetText = document.getElementById('modalSnippetText');
+        if (card.snippet) {
+            modalSnippetDiv.classList.remove('hidden');
+            modalSnippetText.textContent = card.snippet;
+        } else {
+            modalSnippetDiv.classList.add('hidden');
+            modalSnippetText.textContent = '';
+        }
+
+        // Handle synthesis warning
+        const synthesisWarning = document.getElementById('synthesisWarning');
+        if (card.synthesis_failed) {
+            synthesisWarning.classList.remove('hidden');
+        } else {
+            synthesisWarning.classList.add('hidden');
+        }
+
+        // Render references
+        const modalReferences = document.getElementById('modalReferences');
+        modalReferences.innerHTML = '';
+        if (card.references && card.references.length > 0) {
+            card.references.forEach(ref => {
+                const li = document.createElement('li');
+                const a = document.createElement('a');
+                a.href = ref.url;
+                a.textContent = ref.label;
+                a.target = '_blank';
+                li.appendChild(a);
+                modalReferences.appendChild(li);
+            });
+        } else {
+            modalReferences.innerHTML = '<li>No references available.</li>';
+        }
+
+        // Render badges
+        const modalBadges = document.getElementById('modalBadges');
+        modalBadges.innerHTML = '';
+        if (card.badges && card.badges.length > 0) {
+            card.badges.forEach(badge => {
+                const span = document.createElement('span');
+                span.className = 'badge';
+                span.textContent = badge;
+                modalBadges.appendChild(span);
+            });
+        }
+
+        // Render tags
+        const modalTags = document.getElementById('modalTags');
+        modalTags.innerHTML = '';
+        if (card.tags && card.tags.length > 0) {
+            card.tags.forEach(tag => {
+                const span = document.createElement('span');
+                span.className = 'tag';
+                span.textContent = tag;
+                modalTags.appendChild(span);
+            });
+        }
+
+        document.getElementById('cardModal').classList.remove('hidden');
+    }
+
+    closeCardModal() {
+        document.getElementById('cardModal').classList.add('hidden');
+    }
+
+    formatDate(dateString) {
+        const options = { year: 'numeric', month: 'short', day: 'numeric' };
+        return new Date(dateString).toLocaleDateString(undefined, options);
+    }
+
+    showLoading() {
+        document.getElementById('loadingState').classList.remove('hidden');
+        this.hideAllStates();
+    }
+
+    hideLoading() {
+        document.getElementById('loadingState').classList.add('hidden');
+    }
+
+    showEmpty() {
+        document.getElementById('emptyState').classList.remove('hidden');
+        this.hideAllStates();
+    }
+
+    hideEmpty() {
+        document.getElementById('emptyState').classList.add('hidden');
+    }
+
+    showError(message) {
+        document.getElementById('errorMessage').textContent = message;
+        document.getElementById('errorState').classList.remove('hidden');
+        this.hideAllStates();
+    }
+
+    hideError() {
+        document.getElementById('errorState').classList.add('hidden');
+    }
+
+    hideAllStates() {
+        const states = ['loadingState', 'emptyState', 'errorState'];
+        states.forEach(stateId => {
+            document.getElementById(stateId).classList.add('hidden');
+        });
+    }
+
     showTopicHeader(data) {
         const topicHeader = document.getElementById('topicHeader');
         const topicTitle = document.getElementById('topicTitle');
@@ -155,183 +333,12 @@ class AIFlashApp {
         topicTitle.textContent = `"${data.topic_query}"`;
         topicSummary.textContent = data.topic_summary;
         topicWhy.textContent = data.why_it_matters;
-
         topicHeader.classList.remove('hidden');
     }
 
     hideTopicHeader() {
         const topicHeader = document.getElementById('topicHeader');
         topicHeader.classList.add('hidden');
-    }
-
-    async refreshTopic() {
-        if (!this.isTopicView || !this.currentTopic) {
-            return;
-        }
-
-        // If we're in topic view, go back to morning brief
-        this.clearSearch();
-    }
-
-    clearSearch() {
-        // Clear search input
-        const searchInput = document.getElementById('searchInput');
-        searchInput.value = '';
-        
-        // Reset to morning brief view
-        this.isTopicView = false;
-        this.currentTopic = '';
-        this.hideTopicHeader();
-        
-        // Load morning brief
-        this.loadMorningBrief();
-    }
-
-    renderCurrentCard() {
-        if (this.currentCards.length === 0) {
-            this.showEmpty();
-            return;
-        }
-
-        const card = this.currentCards[this.currentIndex];
-        this.renderCard(card);
-        this.updateCardCounter();
-        this.hideAllStates();
-    }
-
-    renderCard(card) {
-        // Basic information
-        document.getElementById('cardSource').textContent = card.source;
-        document.getElementById('cardDate').textContent = this.formatDate(card.published_at);
-        document.getElementById('cardTitle').textContent = card.title;
-        document.getElementById('cardTldr').textContent = card.tl_dr;
-        document.getElementById('cardSummary').textContent = card.summary;
-        document.getElementById('cardWhy').textContent = card.why_it_matters;
-
-        // Synthesis warning
-        const synthesisWarning = document.getElementById('synthesisWarning');
-        if (card.synthesis_failed) {
-            synthesisWarning.classList.remove('hidden');
-        } else {
-            synthesisWarning.classList.add('hidden');
-        }
-
-        // Badges
-        this.renderBadges(card.badges);
-
-        // Tags
-        this.renderTags(card.tags);
-
-        // References
-        this.renderReferences(card.references);
-
-        // Show card
-        document.getElementById('currentCard').classList.remove('hidden');
-        document.getElementById('cardNavigation').classList.remove('hidden');
-    }
-
-    renderBadges(badges) {
-        const badgesContainer = document.getElementById('cardBadges');
-        badgesContainer.innerHTML = '';
-
-        badges.forEach(badge => {
-            const badgeElement = document.createElement('span');
-            badgeElement.className = 'px-2 py-1 bg-purple-600/20 text-purple-300 rounded text-xs font-medium';
-            badgeElement.textContent = badge;
-            badgesContainer.appendChild(badgeElement);
-        });
-    }
-
-    renderTags(tags) {
-        const tagsContainer = document.getElementById('cardTags');
-        tagsContainer.innerHTML = '';
-
-        tags.forEach(tag => {
-            const tagElement = document.createElement('span');
-            tagElement.className = 'px-3 py-1 bg-white/10 text-white/80 rounded-full text-sm';
-            tagElement.textContent = tag;
-            tagsContainer.appendChild(tagElement);
-        });
-    }
-
-    renderReferences(references) {
-        const referencesContainer = document.getElementById('cardReferences');
-        referencesContainer.innerHTML = '';
-
-        references.forEach(ref => {
-            const refElement = document.createElement('a');
-            refElement.href = ref.url;
-            refElement.target = '_blank';
-            refElement.rel = 'noopener noreferrer';
-            refElement.className = 'px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors border border-white/20 text-sm';
-            refElement.textContent = ref.label;
-            referencesContainer.appendChild(refElement);
-        });
-    }
-
-    nextCard() {
-        if (this.currentCards.length === 0) return;
-
-        this.currentIndex = (this.currentIndex + 1) % this.currentCards.length;
-        this.renderCurrentCard();
-    }
-
-    prevCard() {
-        if (this.currentCards.length === 0) return;
-
-        this.currentIndex = this.currentIndex === 0 ? this.currentCards.length - 1 : this.currentIndex - 1;
-        this.renderCurrentCard();
-    }
-
-
-    showModal(card) {
-        // Set modal content
-        document.getElementById('modalTitle').textContent = card.title;
-        document.getElementById('modalSummary').textContent = card.summary;
-        document.getElementById('modalWhy').textContent = card.why_it_matters;
-
-        // Show snippet if available
-        const snippetDiv = document.getElementById('modalSnippet');
-        const snippetText = document.getElementById('modalSnippetText');
-        if (card.snippet) {
-            snippetText.textContent = card.snippet;
-            snippetDiv.classList.remove('hidden');
-        } else {
-            snippetDiv.classList.add('hidden');
-        }
-
-        // Render modal references
-        this.renderModalReferences(card.references);
-
-        // Show modal
-        document.getElementById('cardModal').classList.remove('hidden');
-    }
-
-    renderModalReferences(references) {
-        const referencesContainer = document.getElementById('modalReferences');
-        referencesContainer.innerHTML = '';
-
-        references.forEach(ref => {
-            const refElement = document.createElement('a');
-            refElement.href = ref.url;
-            refElement.target = '_blank';
-            refElement.rel = 'noopener noreferrer';
-            refElement.className = 'block p-4 bg-white/5 hover:bg-white/10 rounded-lg transition-colors border border-white/20';
-            refElement.innerHTML = `
-                <div class="font-medium text-white">${ref.label}</div>
-                <div class="text-white/60 text-sm mt-1">${ref.url}</div>
-            `;
-            referencesContainer.appendChild(refElement);
-        });
-    }
-
-    closeModal() {
-        document.getElementById('cardModal').classList.add('hidden');
-    }
-
-    updateCardCounter() {
-        const counter = document.getElementById('cardCounter');
-        counter.textContent = `${this.currentIndex + 1} of ${this.currentCards.length}`;
     }
 
     handleKeyboard(e) {
@@ -346,101 +353,38 @@ class AIFlashApp {
         switch (e.key) {
             case 'ArrowLeft':
                 e.preventDefault();
-                this.prevCard();
+                this.navigateCards(-1);
                 break;
             case 'ArrowRight':
                 e.preventDefault();
-                this.nextCard();
+                this.navigateCards(1);
                 break;
             case 'Escape':
                 e.preventDefault();
-                this.closeModal();
+                this.closeCardModal();
                 break;
         }
     }
 
-    showLoading() {
-        document.getElementById('loadingState').classList.remove('hidden');
-        this.hideAllStates();
-    }
-
-    hideLoading() {
-        document.getElementById('loadingState').classList.add('hidden');
-    }
-
-    showError(message) {
-        document.getElementById('errorMessage').textContent = message;
-        document.getElementById('errorState').classList.remove('hidden');
-        this.hideAllStates();
-    }
-
-    showEmpty() {
-        document.getElementById('emptyState').classList.remove('hidden');
-        this.hideAllStates();
-    }
-
-    hideAllStates() {
-        document.getElementById('loadingState').classList.add('hidden');
-        document.getElementById('errorState').classList.add('hidden');
-        document.getElementById('emptyState').classList.add('hidden');
-    }
-
-    async retry() {
-        if (this.isTopicView) {
-            await this.handleSearch();
-        } else {
-            await this.loadMorningBrief();
-        }
-    }
-
-    formatDate(dateString) {
-        const date = new Date(dateString);
-        return date.toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'short',
-            day: 'numeric'
-        });
-    }
-
-    updateStatusIndicator() {
-        const indicator = document.getElementById('statusIndicator');
-        const statusText = indicator.nextElementSibling;
-
-        // Check API health
-        fetch('/api/health')
-            .then(response => response.json())
-            .then(data => {
-                if (data.status === 'healthy') {
-                    indicator.className = 'w-3 h-3 bg-green-500 rounded-full animate-pulse';
-                    statusText.textContent = 'Live';
-                } else {
-                    indicator.className = 'w-3 h-3 bg-yellow-500 rounded-full animate-pulse';
-                    statusText.textContent = 'Issues';
-                }
-            })
-            .catch(() => {
-                indicator.className = 'w-3 h-3 bg-red-500 rounded-full animate-pulse';
-                statusText.textContent = 'Offline';
-            });
-    }
-
     showKeyboardHelp() {
-        const help = document.getElementById('keyboardHelp');
-        
-        // Show help for 3 seconds on load
-        help.classList.remove('hidden');
-        setTimeout(() => {
-            help.classList.add('hidden');
-        }, 3000);
+        document.getElementById('keyboardHelp').classList.remove('hidden');
+    }
+
+    hideKeyboardHelp() {
+        document.getElementById('keyboardHelp').classList.add('hidden');
+    }
+
+    retry() {
+        this.loadMorningBrief();
+    }
+
+    updateCardCounter() {
+        const counter = document.getElementById('cardCounter');
+        counter.textContent = `${this.currentIndex + 1} of ${this.currentCards.length}`;
     }
 }
 
-// Initialize the application when DOM is loaded
+// Initialize the application when the DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
-    window.aiflashApp = new AIFlashApp();
+    new AIFlashApp();
 });
-
-// Export for potential module usage
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = AIFlashApp;
-}
