@@ -26,14 +26,41 @@ class DailyScheduler:
     
     def _setup_logging(self):
         """Setup logging configuration"""
-        logging.basicConfig(
-            level=getattr(logging, "INFO"),
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            handlers=[
-                logging.FileHandler('logs/scheduler.log'),
-                logging.StreamHandler()
-            ]
-        )
+        import os
+        
+        # Create logs directory if it doesn't exist
+        logs_dir = 'logs'
+        if not os.path.exists(logs_dir):
+            try:
+                os.makedirs(logs_dir, exist_ok=True)
+            except Exception:
+                # If we can't create the directory, just use console logging
+                logging.basicConfig(
+                    level=getattr(logging, "INFO"),
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                    handlers=[logging.StreamHandler()]
+                )
+                self.logger = logging.getLogger('scheduler')
+                return
+        
+        # Try to set up file logging, fallback to console only if it fails
+        try:
+            logging.basicConfig(
+                level=getattr(logging, "INFO"),
+                format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                handlers=[
+                    logging.FileHandler(os.path.join(logs_dir, 'scheduler.log')),
+                    logging.StreamHandler()
+                ]
+            )
+        except Exception:
+            # Fallback to console logging only
+            logging.basicConfig(
+                level=getattr(logging, "INFO"),
+                format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                handlers=[logging.StreamHandler()]
+            )
+        
         self.logger = logging.getLogger('scheduler')
     
     def _schedule_jobs(self):
