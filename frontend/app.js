@@ -183,17 +183,38 @@ class AIFlashApp {
         // Create card element
         const cardElement = document.createElement('div');
         cardElement.className = 'card card-hover';
+        
+        // Build references HTML
+        let referencesHtml = '';
+        if (card.references && card.references.length > 0) {
+            referencesHtml = `
+                <div class="card-references">
+                    <div class="card-references-label">References</div>
+                    <div class="card-references-list">
+                        ${card.references.map(ref => `
+                            <a href="${ref.url}" target="_blank" class="card-reference-link">
+                                ${ref.label}
+                            </a>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+        
         cardElement.innerHTML = `
             <div class="card-header">
                 <span class="card-source">${card.source}</span>
                 <span class="card-date">${this.formatDate(card.published_at)}</span>
             </div>
-            <div class="card-title">${card.title}</div>
-            <div class="card-tldr">${card.tl_dr}</div>
-            <div class="card-summary">${card.summary}</div>
-            <div class="card-footer">
-                <div class="card-why-label">Why it matters</div>
-                <div class="card-why-text">${card.why_it_matters}</div>
+            <div class="card-content">
+                <div class="card-title">${card.title}</div>
+                <div class="card-tldr">${card.tl_dr}</div>
+                <div class="card-summary">${card.summary}</div>
+                <div class="card-footer">
+                    <div class="card-why-label">Why it matters</div>
+                    <div class="card-why-text">${card.why_it_matters}</div>
+                </div>
+                ${referencesHtml}
             </div>
         `;
         cardContainer.appendChild(cardElement);

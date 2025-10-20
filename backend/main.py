@@ -127,7 +127,14 @@ async def get_topic_feed(
                         continue
                 print(f"Converted to {len(search_results)} Card objects")
             else:
-                search_results = []
+                # No vector results, fallback to database search
+                print("No vector results, falling back to database search")
+                search_results = db_manager.search_articles(
+                    query=q,
+                    limit=config.topic_feed_top_k,
+                    days=timeframe_days
+                )
+                print(f"Database search returned {len(search_results)} results")
         except Exception as e:
             print(f"Vector search failed: {e}, falling back to database search")
             # Fallback to database search
@@ -161,7 +168,7 @@ async def get_topic_feed(
         # Generate topic summary
         try:
             # Convert Card objects to dictionaries for the summarizer
-            search_results_dicts = [card.dict() for card in search_results]
+            search_results_dicts = [card.model_dump() for card in search_results]
             topic_summary, why_it_matters = summarizer.generate_topic_summary(q, search_results_dicts)
         except Exception as e:
             logger.warning(f"Error generating topic summary: {e}")

@@ -2,6 +2,8 @@
 
 **Lightning-fast AI insights, sourced fresh daily.**
 
+🌐 **[Live Demo](https://ai-flash-cards-master-6b09b9b.kuberns.cloud/)** - Try it now!
+
 ## 🎯 The Problem
 
 The AI landscape is overwhelming. With hundreds of blogs, research papers, and news sources covering AI breakthroughs, it's nearly impossible to stay updated and identify what truly matters. Information overload makes it difficult to:
@@ -13,24 +15,41 @@ The AI landscape is overwhelming. With hundreds of blogs, research papers, and n
 
 ## 💡 The Solution
 
-AI Flash Cards delivers latest news on AI breakthroughs & releases as swipeable cards. 
+AI Flash Cards Service delivers latest news on AI breakthroughs & releases as swipeable cards. 
 
-There are hundreds or thousands of blogs on AI providing news about AI releases and what people are doing. This project aims at solving this problem. It utilizes RSS feeds from trusted sources like Hugging Face, OpenAI, Hacker News, DeepMind, Microsoft, NVIDIA, AWS, arXiv, MIT.edu - fetches latest blogs, applies LLM powered filtering to figure out relevance and serves you the top 10 most relevant articles every day. Also provides search functionality to provide latest on any AI-related topic - this is done with help of semantic search on precomputed vectors on sources.
+## 🔄 How It Works
 
-## ✨ What Makes It Special
+```mermaid
+graph TD
+    A[RSS Feeds<br/>HuggingFace, OpenAI, HackerNews, Microsoft, Deepmind etc.] --> B[Content Mining<br/>Fetch & Parse Articles Data]
+    B --> C[Filtering<br/>LLM-powered Relevance Check]
+    C --> D[AI Summarization<br/>TL;DR, Summary, Why It Matters]
+    D --> E[Vector Embeddings<br/>Azure OpenAI Embeddings]
+    D --> F[Storage<br/>SQLite for fixed morning breif]
+    E --> G[Vector DB<br/>Azure AI Search]
+    F --> H[Morning Brief<br/>Top 10 Daily Cards]
+    G --> I[Topic Search<br/>Semantic Search on Any Topic]
+    H --> J[User Interface<br/>Swipeable Cards]
+    I --> J
+```
 
-- **🎯 Smart AI Filtering**: Automatically filters hundreds of AI sources to find the most relevant content
-- **⚡ Lightning Fast**: Get insights in seconds, not hours of reading through countless blogs
-- **🤖 AI-Powered Summaries**: Each card includes TL;DR, summary, and "why it matters"
-- **🔄 Daily Updates**: Fresh content sourced from 9+ trusted AI sources (RSS Feeds)
+![AI Flash Cards Landing Page](img/landing.png)
+
+### Daily Flow
+1. **🌅 6 AM UTC**: Automated ingestion runs daily
+2. **🤖 AI Processing**: Content filtered and summarized by AI
+3. **📱 User Experience**: Fresh cards ready for morning consumption
+4. **🔍 Search**: On-demand topic exploration anytime
+
+
+It utilizes RSS feeds from trusted sources like Hugging Face, OpenAI, Hacker News, DeepMind, Microsoft, NVIDIA, AWS, arXiv, MIT.edu - fetches latest blogs, applies LLM powered filtering to figure out relevance and serves you the top 10 most relevant articles every day. Also provides search functionality to provide latest on any AI-related topic - this is done with help of semantic search on precomputed vectors on sources.
 
 ## Quick Start
 
-### Prerequisites
+### Prerequisites for development
 - Python 3.11+
 - Azure OpenAI service
 - Azure AI Search service
-- Azure Storage Account (for Azure Files)
 
 ### Local Development
 

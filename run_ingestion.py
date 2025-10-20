@@ -20,9 +20,9 @@ async def main():
         pipeline = RSSIngestionPipeline()
         
         # Run the ingestion with limit of 1 article per feed, batch filtering, and clear database
-        print("Fetching articles from RSS feeds (limit: 1 per feed)...")
+        print("Fetching articles from RSS feeds (limit: 5 per feed)...")
         print("WARNING: CLEARING DATABASE - All existing articles will be removed!")
-        result = await pipeline.ingest_pipeline(limit_per_feed=1, batch_size=5, clear_db=True)
+        result = await pipeline.ingest_pipeline(limit_per_feed=5, batch_size=5, clear_db=True)
         
         print(f"Ingestion completed successfully! Result: {result}")
         

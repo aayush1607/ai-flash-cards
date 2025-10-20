@@ -423,7 +423,6 @@ class RSSIngestionPipeline:
             
             articles_text += f"""
 Article {i}:
-- ID: {article['content_id']}
 - Title: {title}
 - Source: {source}
 - Preview: {content_preview}...
@@ -435,8 +434,8 @@ You are filtering articles for an AI research aggregator. From the following art
 
 {articles_text}
 
-Return ONLY the content IDs of relevant articles in this exact JSON format:
-{{"relevant_ids": ["content_id_1", "content_id_2", ...]}}
+Return ONLY the article numbers of relevant articles in this exact JSON format:
+{{"relevant_ids": ["article_1", "article_2", "article_3", ...]}}
 
 Only include articles that are:
 1. About AI, ML, or technology research
@@ -466,17 +465,28 @@ Return the JSON response only.
             if json_start != -1 and json_end > json_start:
                 json_str = response[json_start:json_end]
                 result = json.loads(json_str)
-                relevant_ids = result.get('relevant_ids', [])
-                print(f"Parsed relevant IDs: {relevant_ids}")
-                return relevant_ids
+                article_numbers = result.get('relevant_ids', [])
+                print(f"Parsed article numbers: {article_numbers}")
+                
+                # Map article numbers back to content IDs
+                relevant_content_ids = []
+                for article_num in article_numbers:
+                    # Extract number from "article_X" format
+                    if article_num.startswith('article_'):
+                        try:
+                            index = int(article_num.split('_')[1]) - 1  # Convert to 0-based index
+                            if 0 <= index < len(batch):
+                                relevant_content_ids.append(batch[index]['content_id'])
+                        except (ValueError, IndexError):
+                            print(f"Invalid article number: {article_num}")
+                            continue
+                
+                print(f"Mapped to content IDs: {relevant_content_ids}")
+                return relevant_content_ids
             else:
-                # Fallback: look for content IDs in the response
-                relevant_ids = []
-                for article in batch:
-                    if article['content_id'] in response:
-                        relevant_ids.append(article['content_id'])
-                print(f"Fallback parsing found IDs: {relevant_ids}")
-                return relevant_ids
+                # Fallback: return all IDs if JSON parsing fails
+                print("Failed to parse JSON, returning all articles")
+                return [article['content_id'] for article in batch]
                 
         except Exception as e:
             print(f"Error parsing batch filter response: {e}")
