@@ -19,7 +19,7 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-
+*.playwright-mcp/
 # Environment variables
 .env
 .env.local

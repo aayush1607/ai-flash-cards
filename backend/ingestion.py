@@ -392,7 +392,7 @@ class RSSIngestionPipeline:
                 batch_prompt = self._create_batch_filter_prompt(batch)
                 
                 # Get AI response for batch
-                response = summarizer.client.chat.completions.create(
+                response = await summarizer.client.chat.completions.create(
                     model=summarizer.deployment_name,
                     messages=[{"role": "user", "content": batch_prompt}],
                     max_tokens=500,
