@@ -77,25 +77,32 @@ class DailyScheduler:
         self.logger.info("Scheduled jobs configured")
     
     def _run_ingestion_job(self):
-        """Run the daily ingestion job"""
-        try:
-            self.logger.info("Starting daily ingestion job")
-            self.last_run = datetime.utcnow()
-            
-            # Run ingestion pipeline
-            result = ingestion_pipeline.ingest_pipeline()
-            
-            if result['success']:
-                self.last_success = datetime.utcnow()
-                self.last_error = None
-                self.logger.info(f"Ingestion job completed successfully: {result['message']}")
-            else:
-                self.last_error = result['message']
-                self.logger.error(f"Ingestion job failed: {result['message']}")
-            
-        except Exception as e:
-            self.last_error = str(e)
-            self.logger.error(f"Ingestion job error: {e}")
+        """Run the daily ingestion job in a separate thread to avoid blocking"""
+        import threading
+        
+        def run_ingestion():
+            try:
+                self.logger.info("Starting daily ingestion job")
+                self.last_run = datetime.utcnow()
+                
+                # Run ingestion pipeline
+                result = ingestion_pipeline.ingest_pipeline()
+                
+                if result['success']:
+                    self.last_success = datetime.utcnow()
+                    self.last_error = None
+                    self.logger.info(f"Ingestion job completed successfully: {result['message']}")
+                else:
+                    self.last_error = result['message']
+                    self.logger.error(f"Ingestion job failed: {result['message']}")
+                
+            except Exception as e:
+                self.last_error = str(e)
+                self.logger.error(f"Ingestion job error: {e}")
+        
+        # Run in separate thread to avoid blocking
+        thread = threading.Thread(target=run_ingestion, daemon=True)
+        thread.start()
     
     def _run_cleanup_job(self):
         """Run weekly cleanup job"""
