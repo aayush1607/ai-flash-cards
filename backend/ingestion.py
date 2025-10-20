@@ -251,7 +251,7 @@ class RSSIngestionPipeline:
             print(f"Error processing article: {e}")
             return None
     
-    async def ingest_pipeline(self, limit_per_feed: int = 10, batch_size: int = 10, clear_db: bool = False) -> Dict[str, Any]:
+    def ingest_pipeline(self, limit_per_feed: int = 10, batch_size: int = 10, clear_db: bool = False) -> Dict[str, Any]:
         """Run the complete ingestion pipeline with batch filtering"""
         try:
             print("Starting ingestion pipeline...")
@@ -276,7 +276,7 @@ class RSSIngestionPipeline:
             
             # Batch filter for relevance
             print("Filtering articles for relevance...")
-            relevant_ids = await self._batch_filter_relevant_articles(raw_articles, batch_size)
+            relevant_ids = self._batch_filter_relevant_articles(raw_articles, batch_size)
             print(f"Found {len(relevant_ids)} relevant articles out of {len(raw_articles)}")
             
             # Filter articles to only process relevant ones
@@ -379,7 +379,7 @@ class RSSIngestionPipeline:
                 'last_ingestion': None
             }
 
-    async def _batch_filter_relevant_articles(self, articles: List[Dict[str, Any]], batch_size: int = 10) -> List[str]:
+    def _batch_filter_relevant_articles(self, articles: List[Dict[str, Any]], batch_size: int = 10) -> List[str]:
         """Use AI to filter relevant articles in batches, returning content_ids of relevant articles"""
         try:
             relevant_ids = []
@@ -392,7 +392,7 @@ class RSSIngestionPipeline:
                 batch_prompt = self._create_batch_filter_prompt(batch)
                 
                 # Get AI response for batch
-                response = await summarizer.client.chat.completions.create(
+                response = summarizer.client.chat.completions.create(
                     model=summarizer.deployment_name,
                     messages=[{"role": "user", "content": batch_prompt}],
                     max_tokens=500,
