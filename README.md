@@ -15,7 +15,7 @@ The AI landscape is overwhelming. With hundreds of blogs, research papers, and n
 
 ## 💡 The Solution
 
-AI Flash Cards Service delivers latest news on AI breakthroughs & releases as swipeable cards. 
+AI Flash Cards service delivers AI-curated insights from the latest research, breakthroughs & news. It filter hundreds of sources, score content for quality, and present the top insights as swipeable cards. 
 
 ## 🔄 How It Works
 
@@ -233,4 +233,4 @@ python test/scripts/run_ingestion.py
 - **Smart AI Filtering**: Automatically filters hundreds of AI sources to find relevance
 - **Semantic Search**: Find relevant articles on any AI topic using vector search
 - **AI-Powered Summaries**: Each card includes TL;DR, summary, and "why it matters"
-- **Trusted Sources**: Content from Hugging Face, OpenAI, Hacker News, DeepMind, Microsoft, NVIDIA, AWS, arXiv, MIT.edu
+- **Trusted Sources**: Content from Hugging Face, OpenAI, Hacker News, DeepMind, Microsoft, NVIDIA, AWS, arXiv, MIT.edu 
