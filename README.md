@@ -21,16 +21,35 @@ AI Flash Cards Service delivers latest news on AI breakthroughs & releases as sw
 
 ```mermaid
 graph TD
-    A[RSS Feeds<br/>HuggingFace, OpenAI, HackerNews, Microsoft, Deepmind etc.] --> B[Content Mining<br/>Fetch & Parse Articles Data]
-    B --> C[Filtering<br/>LLM-powered Relevance Check]
-    C --> D[AI Summarization<br/>TL;DR, Summary, Why It Matters]
-    D --> E[Vector Embeddings<br/>Azure OpenAI Embeddings]
-    D --> F[Storage<br/>SQLite for fixed morning breif]
-    E --> G[Vector DB<br/>Azure AI Search]
-    F --> H[Morning Brief<br/>Top 10 Daily Cards]
-    G --> I[Topic Search<br/>Semantic Search on Any Topic]
-    H --> J[User Interface<br/>Swipeable Cards]
-    I --> J
+    A[RSS Feeds<br/>HuggingFace, OpenAI, HackerNews, Microsoft, etc.] --> B[Content Mining<br/>Fetch & Save Raw Articles to SQLite]
+    B --> C{Smart Database Reset<br/>Clear DB only if fetch succeeds}
+    C -->|Success| D[Raw Articles Saved<br/>is_relevance_check_done = false]
+    C -->|Failed| E[Keep Existing Data<br/>Prevent data loss]
+    D --> F[Independent Job 1<br/>Relevance Check Every 2h]
+    F --> G[LLM Quality Scoring<br/>0.0-1.0 with Few-Shot Examples]
+    G --> H{Score ≥ 0.7?<br/>High-Quality Threshold}
+    H -->|Yes| I[Mark Relevant<br/>Prioritize by published_at DESC]
+    H -->|No| J[Mark Irrelevant<br/>Skip processing]
+    I --> K[Independent Job 2<br/>Summarization Every 3h]
+    K --> L[Prioritized Processing<br/>Highest relevance_score first]
+    L --> M[AI Summarization<br/>TL;DR, Summary, Why It Matters]
+    M --> N[Vector Embeddings<br/>Azure OpenAI Embeddings]
+    M --> O[Update SQLite<br/>is_processed = true]
+    N --> P[Vector DB<br/>Azure AI Search<br/>All fields: tl_dr, why_it_matters, tags, refs]
+    O --> Q[Morning Brief Query]
+    P --> R[Topic Search Query]
+    Q --> S1[Try 1: Fully Processed<br/>Order by relevance_score DESC]
+    Q --> S2[Try 2: Relevance-Checked<br/>Order by relevance_score DESC]
+    Q --> S3[Try 3: Raw Articles<br/>Static filters + exclude HN]
+    S1 --> T[User Interface<br/>Swipeable Cards]
+    S2 --> T
+    S3 --> T
+    R --> U[Vector Search<br/>Attempt with 2.5s Timeout]
+    U --> V{Timeout?}
+    V -->|Within 2.5s| W[Return Vector Results]
+    V -->|Timeout| X[Fallback to DB Search<br/>Same 3-tier fallback]
+    W --> T
+    X --> S1
 ```
 
 ![AI Flash Cards Landing Page](img/landing.png)
