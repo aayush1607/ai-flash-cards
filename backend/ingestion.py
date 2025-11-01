@@ -478,7 +478,7 @@ class RSSIngestionPipeline:
                     
                 except Exception as e:
                     print(f"Error processing article {article.content_id}: {e}")
-                    db_mgr.increment_summarization_failure(article.content_id)
+                    db_manager.increment_summarization_failure(article.content_id)
                     failed_count += 1
                     continue
             
