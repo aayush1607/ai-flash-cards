@@ -311,12 +311,22 @@ class RSSIngestionPipeline:
             return result
             
         except Exception as e:
-            print(f"Error in ingestion pipeline: {e}")
             import traceback
-            traceback.print_exc()
+            error_trace = traceback.format_exc()
+            print(f"Error in ingestion pipeline: {e}")
+            print(f"Full traceback:\n{error_trace}")
+            # Also log if logger is available
+            try:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Error in ingestion pipeline: {e}", exc_info=True)
+            except:
+                pass
             return {
                 'success': False,
                 'message': f'Ingestion failed: {str(e)}',
+                'error': str(e),
+                'traceback': error_trace,
                 'new_articles': 0,
                 'total_articles': db_manager.get_article_count()
             }
@@ -386,12 +396,22 @@ class RSSIngestionPipeline:
             return result
             
         except Exception as e:
-            print(f"Error in relevance check job: {e}")
             import traceback
-            traceback.print_exc()
+            error_trace = traceback.format_exc()
+            print(f"Error in relevance check job: {e}")
+            print(f"Full traceback:\n{error_trace}")
+            # Also log if logger is available
+            try:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Error in relevance check job: {e}", exc_info=True)
+            except:
+                pass
             return {
                 'success': False,
                 'message': f'Relevance check failed: {str(e)}',
+                'error': str(e),
+                'traceback': error_trace,
                 'checked': 0,
                 'relevant': 0
             }
@@ -458,7 +478,7 @@ class RSSIngestionPipeline:
                     
                 except Exception as e:
                     print(f"Error processing article {article.content_id}: {e}")
-                    db_manager.increment_summarization_failure(article.content_id)
+                    db_mgr.increment_summarization_failure(article.content_id)
                     failed_count += 1
                     continue
             
@@ -473,7 +493,6 @@ class RSSIngestionPipeline:
             # After processing, optionally clean up stale documents from vector store
             # Get all processed articles from database to compare with vector store
             try:
-                from backend.database import db_manager
                 from backend.models import Article
                 with db_manager.get_session() as session:
                     # Get all processed articles (that should be in vector store)
@@ -504,12 +523,22 @@ class RSSIngestionPipeline:
             return result
             
         except Exception as e:
-            print(f"Error in summarization job: {e}")
             import traceback
-            traceback.print_exc()
+            error_trace = traceback.format_exc()
+            print(f"Error in summarization job: {e}")
+            print(f"Full traceback:\n{error_trace}")
+            # Also log if logger is available
+            try:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Error in summarization job: {e}", exc_info=True)
+            except:
+                pass
             return {
                 'success': False,
                 'message': f'Summarization failed: {str(e)}',
+                'error': str(e),
+                'traceback': error_trace,
                 'summarized': 0,
                 'failed': 0
             }

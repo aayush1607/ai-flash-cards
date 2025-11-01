@@ -32,6 +32,7 @@ class Config:
         self.morning_brief_top_n = int(os.getenv('TOP_N_MORNING_BRIEF', '10'))
         self.topic_feed_top_k = 15
         self.allowed_origins = ["*"]  # For CORS
+        self.dev_ingest_passcode = os.getenv('DEV_INGEST_PASSCODE', 'dev-passcode-change-me')  # Simple passcode for dev ingestion endpoint
         
         # Validate required settings
         self._validate()

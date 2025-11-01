@@ -4,6 +4,7 @@ from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
+from pydantic import BaseModel
 import logging
 import os
 import asyncio
@@ -404,30 +405,111 @@ async def internal_error_handler(request, exc):
 # DEVELOPMENT ENDPOINTS (Remove in production)
 # ============================================================================
 
-@app.get("/api/dev/ingest")
-async def dev_trigger_ingestion():
-    """Development endpoint to trigger ingestion"""
+class IngestRequest(BaseModel):
+    """Request model for ingestion endpoint"""
+    passcode: str
+
+@app.post("/api/dev/ingest")
+async def dev_trigger_ingestion(request: IngestRequest):
+    """Development endpoint to trigger complete ingestion pipeline (ingestion + relevance check + summarization)"""
+    # Validate passcode
+    if request.passcode != config.dev_ingest_passcode:
+        raise HTTPException(status_code=401, detail="Invalid passcode")
+    
     try:
         from backend.ingestion import ingestion_pipeline
-        result = ingestion_pipeline.ingest_pipeline()
-        return result
+        
+        results = {
+            "phase1_ingestion": None,
+            "phase2_relevance_check": None,
+            "phase3_summarization": None,
+            "overall_success": False
+        }
+        
+        # Phase 1: Fetch and save raw articles
+        logger.info("Phase 1: Starting ingestion (fetch and save raw articles)...")
+        result = ingestion_pipeline.ingest_pipeline(
+            limit_per_feed=10,
+            batch_size=None,
+            clear_db=True  # Clear database for fresh ingestion
+        )
+        results["phase1_ingestion"] = result
+        
+        if not result.get('success'):
+            logger.error(f"Phase 1 (Ingestion) failed: {result.get('message')}")
+            if 'traceback' in result:
+                logger.error(f"Traceback: {result['traceback']}")
+            # Continue with other phases even if ingestion had issues
+        
+        # Phase 2: Relevance Check
+        logger.info("Phase 2: Starting relevance check...")
+        relevance_result = ingestion_pipeline.run_relevance_check_job(batch_size=10)
+        results["phase2_relevance_check"] = relevance_result
+        
+        if not relevance_result.get('success'):
+            logger.error(f"Phase 2 (Relevance Check) failed: {relevance_result.get('message')}")
+            if 'traceback' in relevance_result:
+                logger.error(f"Traceback: {relevance_result['traceback']}")
+        
+        # Phase 3: Summarization
+        logger.info("Phase 3: Starting summarization...")
+        summary_result = ingestion_pipeline.run_summarization_job(limit=20)
+        results["phase3_summarization"] = summary_result
+        
+        if not summary_result.get('success'):
+            logger.error(f"Phase 3 (Summarization) failed: {summary_result.get('message')}")
+            if 'traceback' in summary_result:
+                logger.error(f"Traceback: {summary_result['traceback']}")
+        
+        # Determine overall success
+        results["overall_success"] = (
+            result.get('success', False) and 
+            relevance_result.get('success', False) and 
+            summary_result.get('success', False)
+        )
+        
+        # Create summary response
+        response = {
+            "success": results["overall_success"],
+            "message": "Complete pipeline executed" if results["overall_success"] else "Pipeline completed with some failures",
+            "results": results,
+            "summary": {
+                "raw_articles_saved": result.get('raw_articles_saved', result.get('new_articles', 0)),
+                "articles_checked": relevance_result.get('checked', 0),
+                "relevant_articles": relevance_result.get('relevant', 0),
+                "articles_summarized": summary_result.get('summarized', 0),
+                "summarization_failures": summary_result.get('failed', 0),
+                "total_articles": result.get('total_articles', 0)
+            }
+        }
+        
+        return response
     except Exception as e:
-        logger.error(f"Error in dev ingestion: {e}")
+        logger.error(f"Error in dev ingestion: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Dev ingestion failed: {str(e)}")
 
 @app.get("/api/dev/stats")
 async def dev_get_stats():
     """Development endpoint to get system statistics"""
     try:
+        from backend.ingestion import ingestion_pipeline
+        
+        # Get pipeline status details
+        pipeline_stats = ingestion_pipeline.get_ingestion_stats()
+        
         stats = {
             "database": {
                 "article_count": db_manager.get_article_count(),
-                "recent_articles_7d": len(db_manager.get_recent_articles(limit=1000, days=7))
+                "recent_articles_7d": len(db_manager.get_recent_articles(limit=1000, days=7)),
+                "raw_articles": len(db_manager.get_unchecked_relevance_articles(limit=10000)),
+                "unsummarized_articles": len(db_manager.get_unsummarized_articles(limit=10000)),
+                "summarized_articles": db_manager.get_article_count() - len(db_manager.get_unsummarized_articles(limit=10000))
             },
             "vector_store": {
                 "document_count": vector_store.get_document_count()
             },
             "scheduler": daily_scheduler.get_status(),
+            "pipeline": pipeline_stats,
             "config": {
                 "rss_sources": 3,
                 "top_n_morning_brief": config.morning_brief_top_n,
@@ -448,12 +530,18 @@ async def dev_reindex_vector_store():
         # Run re-indexing synchronously (it's already fast with small batches)
         result = vector_store.reindex_all_summarized_articles()
         
-        return {
+        response = {
             "success": result.get('success', False),
             "message": result.get('message', 'Re-indexing completed'),
             "indexed": result.get('indexed', 0),
             "failed": result.get('failed', 0)
         }
+        
+        # Include diagnostics if available
+        if 'diagnostics' in result:
+            response['diagnostics'] = result['diagnostics']
+        
+        return response
     except Exception as e:
         logger.error(f"Error triggering re-indexing: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to trigger re-indexing: {str(e)}")

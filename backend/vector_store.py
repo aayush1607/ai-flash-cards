@@ -423,8 +423,32 @@ class VectorStoreManager:
                 ).all()
             
             if not articles:
-                print("No summarized articles found in database")
-                return {'success': True, 'indexed': 0, 'message': 'No articles to index'}
+                # Provide diagnostic information
+                with db_manager.get_session() as session:
+                    total_articles = session.query(Article).count()
+                    summarized_count = session.query(Article).filter(Article.is_summarized == True).count()
+                    relevance_checked = session.query(Article).filter(Article.is_relevance_check_done == True).count()
+                    relevant = session.query(Article).filter(Article.is_relevant == True).count()
+                
+                diagnostic_msg = (
+                    f"No summarized articles found. "
+                    f"Total articles: {total_articles}, "
+                    f"Summarized: {summarized_count}, "
+                    f"Relevance checked: {relevance_checked}, "
+                    f"Relevant: {relevant}"
+                )
+                print(diagnostic_msg)
+                return {
+                    'success': True, 
+                    'indexed': 0, 
+                    'message': 'No articles to index',
+                    'diagnostics': {
+                        'total_articles': total_articles,
+                        'summarized': summarized_count,
+                        'relevance_checked': relevance_checked,
+                        'relevant': relevant
+                    }
+                }
             
             print(f"Found {len(articles)} summarized articles, converting to cards and indexing...")
             

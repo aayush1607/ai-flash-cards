@@ -84,7 +84,27 @@ def main():
             print("\n✅ Complete pipeline finished successfully!")
             return 0
         else:
-            print("\n⚠️  Pipeline completed with some failures (check logs above)")
+            print("\n⚠️  Pipeline completed with some failures")
+            print("\nDetailed Error Information:")
+            if not result.get('success'):
+                print(f"\n❌ Phase 1 (Ingestion) Error: {result.get('message')}")
+                if 'error' in result:
+                    print(f"   Error: {result['error']}")
+                if 'traceback' in result:
+                    print(f"   Traceback:\n{result['traceback']}")
+            if not relevance_result.get('success'):
+                print(f"\n❌ Phase 2 (Relevance Check) Error: {relevance_result.get('message')}")
+                if 'error' in relevance_result:
+                    print(f"   Error: {relevance_result['error']}")
+                if 'traceback' in relevance_result:
+                    print(f"   Traceback:\n{relevance_result['traceback']}")
+            if not summary_result.get('success'):
+                print(f"\n❌ Phase 3 (Summarization) Error: {summary_result.get('message')}")
+                if 'error' in summary_result:
+                    print(f"   Error: {summary_result['error']}")
+                if 'traceback' in summary_result:
+                    print(f"   Traceback:\n{summary_result['traceback']}")
+            print("\n💡 Tip: Check application logs for more details")
             return 1
         
     except Exception as e:
