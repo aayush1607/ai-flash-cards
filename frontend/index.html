@@ -61,17 +61,44 @@
         <div id="topicHeader" class="topic-header hidden">
             <div class="flex items-center justify-between mb-4">
                 <h2 id="topicTitle" class="topic-title"></h2>
-                <button id="refreshBtn" class="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-dark transition-colors">
-                    Back to Brief
+                <button id="refreshBtn" class="close-button" title="Back to Morning Brief">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" class="w-6 h-6">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
                 </button>
             </div>
             <p id="topicSummary" class="topic-summary"></p>
             <p id="topicWhy" class="topic-why"></p>
         </div>
 
-        <!-- Card Container -->
-        <div id="cardContainer" class="card-container">
-            <!-- Card will be rendered here by JavaScript -->
+        <!-- Content Wrapper (relative positioning for loading/empty states) -->
+        <div class="content-wrapper">
+            <!-- Loading State -->
+            <div id="loadingState" class="loading-state hidden">
+                <div class="loader"></div>
+                <p class="loading-text">Searching AI topics...</p>
+            </div>
+
+            <!-- Empty State -->
+            <div id="emptyState" class="empty-state hidden">
+                <p class="empty-text">No articles found.</p>
+                <button id="retryBtn" class="retry-button">
+                    Retry
+                </button>
+            </div>
+
+            <!-- Error State -->
+            <div id="errorState" class="error-state hidden">
+                <p id="errorMessage" class="error-text">An unexpected error occurred.</p>
+                <button id="reloadBtn" class="reload-button">
+                    Reload
+                </button>
+            </div>
+
+            <!-- Card Container -->
+            <div id="cardContainer" class="card-container">
+                <!-- Card will be rendered here by JavaScript -->
+            </div>
         </div>
 
         <!-- Navigation Buttons -->
@@ -89,12 +116,6 @@
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
                 </svg>
             </button>
-        </div>
-
-        <!-- Loading State -->
-        <div id="loadingState" class="loading-state hidden">
-            <div class="loader"></div>
-            <p class="loading-text">Loading AI insights...</p>
         </div>
 
         <!-- Empty State -->

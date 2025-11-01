@@ -1,11 +1,10 @@
 from datetime import datetime
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, Field, validator
-from sqlalchemy import Column, Integer, String, DateTime, Text, JSON, Boolean
+from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import Column, Integer, String, DateTime, Text, JSON, Boolean, Float
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
-import json
 
 # SQLAlchemy Base
 Base = declarative_base()
@@ -35,13 +34,15 @@ class Card(BaseModel):
     snippet: Optional[str] = Field(None, description="Content snippet")
     synthesis_failed: bool = Field(default=False, description="Whether AI synthesis failed")
     
-    @validator('tl_dr')
+    @field_validator('tl_dr')
+    @classmethod
     def validate_tl_dr(cls, v):
         if len(v) > 140:
             raise ValueError('TL;DR must be 140 characters or less')
         return v
     
-    @validator('badges')
+    @field_validator('badges')
+    @classmethod
     def validate_badges(cls, v):
         allowed_badges = ['CODE', 'DATA', 'REPRO', 'BENCHMARK', 'TUTORIAL']
         for badge in v:
@@ -73,31 +74,52 @@ class Article(Base):
     
     id = Column(Integer, primary_key=True, autoincrement=True)
     content_id = Column(String(255), unique=True, nullable=False, index=True)
-    type = Column(String(50), nullable=False)  # paper, blog, release
-    title = Column(String(500), nullable=False)
+    
+    # Raw article data (saved immediately after extraction)
+    raw_title = Column(String(500), nullable=False)
+    raw_description = Column(Text, nullable=True)
+    raw_content = Column(Text, nullable=True)
+    raw_link = Column(String(500), nullable=False)
     source = Column(String(200), nullable=False)
     published_at = Column(DateTime, nullable=False, index=True)
-    tl_dr = Column(String(140), nullable=False)
-    summary = Column(Text, nullable=False)
-    why_it_matters = Column(Text, nullable=False)
-    badges = Column(JSON, nullable=False, default=list)  # List of strings
-    tags = Column(JSON, nullable=False, default=list)    # List of strings
-    references = Column(JSON, nullable=False, default=list)  # List of Reference objects
+    
+    # Processing status flags
+    is_relevance_check_done = Column(Boolean, default=False, nullable=False, index=True)
+    is_summarized = Column(Boolean, default=False, nullable=False, index=True)
+    failure_count = Column(Integer, default=0, nullable=False)  # Track failures, don't retry if > 3
+    is_relevant = Column(Boolean, nullable=True)  # Result of relevance check
+    relevance_score = Column(Float, nullable=True, index=True)  # LLM relevance score (0.0-1.0)
+    
+    # Summarized data (filled after AI processing)
+    type = Column(String(50), nullable=True)  # paper, blog, release
+    title = Column(String(500), nullable=True)  # May differ from raw_title after processing
+    tl_dr = Column(String(140), nullable=True)
+    summary = Column(Text, nullable=True)
+    why_it_matters = Column(Text, nullable=True)
+    badges = Column(JSON, nullable=True, default=list)  # List of strings
+    tags = Column(JSON, nullable=True, default=list)    # List of strings
+    references = Column(JSON, nullable=True, default=list)  # List of Reference objects
     snippet = Column(Text, nullable=True)
     synthesis_failed = Column(Boolean, default=False)
-    ingested_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     
-    def to_card(self) -> Card:
+    ingested_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    summarized_at = Column(DateTime, nullable=True)
+    
+    def to_card(self) -> Optional[Card]:
         """Convert database model to API model"""
+        # Only return Card if article is summarized
+        if not self.is_summarized:
+            return None
+        
         return Card(
             content_id=self.content_id,
-            type=self.type,
-            title=self.title,
+            type=self.type or 'blog',
+            title=self.title or self.raw_title,
             source=self.source,
             published_at=self.published_at,
-            tl_dr=self.tl_dr,
-            summary=self.summary,
-            why_it_matters=self.why_it_matters,
+            tl_dr=self.tl_dr or self.raw_title[:140],
+            summary=self.summary or self.raw_description or '',
+            why_it_matters=self.why_it_matters or '',
             badges=self.badges or [],
             tags=self.tags or [],
             references=[Reference(**ref) for ref in (self.references or [])],
@@ -107,13 +129,18 @@ class Article(Base):
     
     @classmethod
     def from_card(cls, card: Card) -> 'Article':
-        """Create database model from API model"""
+        """Create database model from API model (for already summarized articles)"""
         return cls(
             content_id=card.content_id,
-            type=card.type,
-            title=card.title,
+            raw_title=card.title,
+            raw_description='',
+            raw_content='',
+            raw_link='',
             source=card.source,
             published_at=card.published_at,
+            is_summarized=True,
+            type=card.type,
+            title=card.title,
             tl_dr=card.tl_dr,
             summary=card.summary,
             why_it_matters=card.why_it_matters,
@@ -121,7 +148,8 @@ class Article(Base):
             tags=card.tags,
             references=[ref.dict() for ref in card.references],
             snippet=card.snippet,
-            synthesis_failed=card.synthesis_failed
+            synthesis_failed=card.synthesis_failed,
+            summarized_at=datetime.utcnow()
         )
 
 # ============================================================================

@@ -1,10 +1,9 @@
 import schedule
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, Any, Optional
 import logging
-from backend.config import config
 from backend.ingestion import ingestion_pipeline
 from backend.database import db_manager
 
@@ -65,8 +64,14 @@ class DailyScheduler:
     
     def _schedule_jobs(self):
         """Schedule daily jobs"""
-        # Schedule daily ingestion at 6 AM UTC
+        # Schedule daily ingestion at 6 AM UTC (only fetches and saves raw articles)
         schedule.every().day.at("06:00").do(self._run_ingestion_job)
+        
+        # Schedule relevance check job every 2 hours (processes unchecked articles)
+        schedule.every(2).hours.do(self._run_relevance_check_job)
+        
+        # Schedule summarization job every 3 hours (processes relevant unsummarized articles)
+        schedule.every(3).hours.do(self._run_summarization_job)
         
         # Schedule cleanup job weekly (Sundays at 2 AM)
         schedule.every().sunday.at("02:00").do(self._run_cleanup_job)
@@ -78,15 +83,14 @@ class DailyScheduler:
     
     def _run_ingestion_job(self):
         """Run the daily ingestion job in a separate thread to avoid blocking"""
-        import threading
         
         def run_ingestion():
             try:
-                self.logger.info("Starting daily ingestion job")
+                self.logger.info("Starting daily ingestion job (clearing database first)")
                 self.last_run = datetime.utcnow()
                 
-                # Run ingestion pipeline
-                result = ingestion_pipeline.ingest_pipeline()
+                # Run ingestion pipeline with clear_db=True to start fresh each day
+                result = ingestion_pipeline.ingest_pipeline(clear_db=True)
                 
                 if result['success']:
                     self.last_success = datetime.utcnow()
@@ -102,6 +106,50 @@ class DailyScheduler:
         
         # Run in separate thread to avoid blocking
         thread = threading.Thread(target=run_ingestion, daemon=True)
+        thread.start()
+    
+    def _run_relevance_check_job(self):
+        """Run relevance check job in a separate thread to avoid blocking"""
+        
+        def run_relevance_check():
+            try:
+                self.logger.info("Starting relevance check job")
+                
+                # Run relevance check
+                result = ingestion_pipeline.run_relevance_check_job(batch_size=10)
+                
+                if result['success']:
+                    self.logger.info(f"Relevance check completed: {result['message']}")
+                else:
+                    self.logger.error(f"Relevance check failed: {result['message']}")
+                
+            except Exception as e:
+                self.logger.error(f"Relevance check job error: {e}")
+        
+        # Run in separate thread to avoid blocking
+        thread = threading.Thread(target=run_relevance_check, daemon=True)
+        thread.start()
+    
+    def _run_summarization_job(self):
+        """Run summarization job in a separate thread to avoid blocking"""
+        
+        def run_summarization():
+            try:
+                self.logger.info("Starting summarization job")
+                
+                # Run summarization (process up to 20 articles at a time)
+                result = ingestion_pipeline.run_summarization_job(limit=20)
+                
+                if result['success']:
+                    self.logger.info(f"Summarization completed: {result['message']}")
+                else:
+                    self.logger.error(f"Summarization failed: {result['message']}")
+                
+            except Exception as e:
+                self.logger.error(f"Summarization job error: {e}")
+        
+        # Run in separate thread to avoid blocking
+        thread = threading.Thread(target=run_summarization, daemon=True)
         thread.start()
     
     def _run_cleanup_job(self):

@@ -136,6 +136,9 @@ class AIFlashApp {
             this.isTopicView = true;
             this.currentTopic = query;
 
+            // Hide loading before showing results
+            this.hideLoading();
+
             // Show topic header
             this.showTopicHeader(data);
 
@@ -143,11 +146,11 @@ class AIFlashApp {
                 this.showEmpty();
             } else {
                 this.renderCurrentCard();
-                this.hideLoading();
             }
 
         } catch (error) {
             console.error('Error searching:', error);
+            this.hideLoading();
             this.showError('Failed to search topics');
         } finally {
             this.isLoading = false;
@@ -201,6 +204,20 @@ class AIFlashApp {
             `;
         }
         
+        // Build tags HTML
+        let tagsHtml = '';
+        if (card.tags && card.tags.length > 0) {
+            tagsHtml = `
+                <div class="card-tags">
+                    <div class="card-tags-list">
+                        ${card.tags.map(tag => `
+                            <span class="card-tag">${tag}</span>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+        
         cardElement.innerHTML = `
             <div class="card-header">
                 <span class="card-source">${card.source}</span>
@@ -210,6 +227,7 @@ class AIFlashApp {
                 <div class="card-title">${card.title}</div>
                 <div class="card-tldr">${card.tl_dr}</div>
                 <div class="card-summary">${card.summary}</div>
+                ${tagsHtml}
                 <div class="card-footer">
                     <div class="card-why-label">Why it matters</div>
                     <div class="card-why-text">${card.why_it_matters}</div>
@@ -311,12 +329,23 @@ class AIFlashApp {
     }
 
     showLoading() {
-        document.getElementById('loadingState').classList.remove('hidden');
-        this.hideAllStates();
+        this.hideAllStates(); // Hide all states first
+        const loadingEl = document.getElementById('loadingState');
+        loadingEl.classList.remove('hidden'); // Then show loading
+        // Also hide card container while loading
+        const cardContainer = document.getElementById('cardContainer');
+        if (cardContainer) {
+            cardContainer.style.opacity = '0.3';
+        }
     }
 
     hideLoading() {
         document.getElementById('loadingState').classList.add('hidden');
+        // Restore card container
+        const cardContainer = document.getElementById('cardContainer');
+        if (cardContainer) {
+            cardContainer.style.opacity = '1';
+        }
     }
 
     showEmpty() {

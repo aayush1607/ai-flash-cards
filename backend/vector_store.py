@@ -37,9 +37,21 @@ class VectorStoreManager:
     def _ensure_index_exists(self):
         """Create search index if it doesn't exist"""
         try:
-            # Check if index exists
-            self.index_client.get_index(self.index_name)
-            print(f"Index {self.index_name} already exists")
+            # Check if index exists and verify it has required fields
+            existing_index = self.index_client.get_index(self.index_name)
+            
+            # Check if index has new required fields (tl_dr, why_it_matters, references)
+            field_names = {field.name for field in existing_index.fields}
+            required_fields = {'tl_dr', 'why_it_matters', 'references'}
+            missing_fields = required_fields - field_names
+            
+            if missing_fields:
+                print(f"Index {self.index_name} exists but is missing fields: {missing_fields}")
+                print("Azure Search doesn't support schema updates. The index needs to be recreated.")
+                print("To fix: Run vector_store.recreate_index_with_schema() or delete and recreate manually")
+                return
+            
+            print(f"Index {self.index_name} already exists with correct schema")
         except Exception:
             # Create index
             print(f"Creating index {self.index_name}")
@@ -52,6 +64,40 @@ class VectorStoreManager:
             print(f"Index {self.index_name} deleted successfully")
         except Exception as e:
             print(f"Error deleting index {self.index_name}: {e}")
+    
+    def recreate_index_with_schema(self) -> bool:
+        """Delete existing index and recreate it with the updated schema.
+        WARNING: This will delete all documents in the index!"""
+        try:
+            print(f"Recreating index {self.index_name} with updated schema...")
+            print("[WARNING] This will delete all existing documents!")
+            
+            # Check if index exists
+            try:
+                self.index_client.get_index(self.index_name)
+                # Index exists, delete it
+                print(f"Deleting existing index {self.index_name}...")
+                self.delete_index()
+                # Wait a moment for deletion to propagate
+                import time
+                time.sleep(2)
+            except Exception:
+                # Index doesn't exist, that's fine
+                print(f"Index {self.index_name} doesn't exist, will create new one")
+            
+            # Create new index with updated schema
+            print(f"Creating new index {self.index_name} with updated schema...")
+            self._create_index()
+            
+            print(f"[SUCCESS] Index {self.index_name} recreated successfully")
+            print("Next step: Run reindex_vector_store.py to populate it with documents")
+            return True
+            
+        except Exception as e:
+            print(f"Error recreating index: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
 
     def clear_all_documents(self) -> bool:
         """Clear all documents from the search index"""
@@ -100,11 +146,14 @@ class VectorStoreManager:
                 SimpleField(name="content_id", type=SearchFieldDataType.String, filterable=True),
                 SearchableField(name="title", type=SearchFieldDataType.String),
                 SearchableField(name="summary", type=SearchFieldDataType.String),
+                SearchableField(name="tl_dr", type=SearchFieldDataType.String),
+                SearchableField(name="why_it_matters", type=SearchFieldDataType.String),
                 SimpleField(name="source", type=SearchFieldDataType.String, filterable=True),
                 SimpleField(name="type", type=SearchFieldDataType.String, filterable=True),
                 SimpleField(name="published_at", type=SearchFieldDataType.DateTimeOffset, filterable=True, sortable=True),
                 SimpleField(name="tags", type=SearchFieldDataType.Collection(SearchFieldDataType.String), filterable=True),
                 SimpleField(name="badges", type=SearchFieldDataType.Collection(SearchFieldDataType.String), filterable=True),
+                SimpleField(name="references", type=SearchFieldDataType.Collection(SearchFieldDataType.String)),  # Store as array of JSON strings
                 SearchableField(name="snippet", type=SearchFieldDataType.String)
             ]
         )
@@ -113,85 +162,360 @@ class VectorStoreManager:
         print(f"Index {self.index_name} created successfully")
     
     def upsert_documents(self, cards: List[Card], embeddings: List[List[float]] = None) -> bool:
-        """Upsert documents to the search index (without embeddings for now)"""
+        """Upsert documents to the search index (replaces existing documents with same ID)"""
         try:
+            if not cards:
+                print("No cards to upsert")
+                return True
+            
             documents = []
             for card in cards:
-                # Create a safe document ID (replace spaces and colons with underscores)
-                safe_id = card.content_id.replace(" ", "_").replace(":", "_")
+                # Create a consistent document ID based on content_id
+                # Use content_id directly as ID, but sanitize it
+                safe_id = card.content_id.replace(" ", "_").replace(":", "_").replace("/", "_")
+                # Convert references to list of JSON strings for storage
+                references_json = []
+                if card.references:
+                    for ref in card.references:
+                        # Store reference as JSON string
+                        ref_dict = {
+                            "label": ref.label,
+                            "url": ref.url
+                        }
+                        references_json.append(json.dumps(ref_dict))
+                
                 doc = {
                     "id": safe_id,
                     "content_id": card.content_id,
-                    "title": card.title,
-                    "summary": card.summary,
-                    "source": card.source,
-                    "type": card.type,
+                    "title": card.title or "",
+                    "summary": card.summary or "",
+                    "tl_dr": card.tl_dr or "",
+                    "why_it_matters": card.why_it_matters or "",
+                    "source": card.source or "",
+                    "type": card.type or "blog",
                     "published_at": card.published_at.isoformat() + "Z",
-                    "tags": card.tags,
-                    "badges": card.badges,
+                    "tags": card.tags or [],
+                    "badges": card.badges or [],
+                    "references": references_json,
                     "snippet": card.snippet or ""
                 }
                 documents.append(doc)
             
-            # Upsert documents
+            print(f"Upserting {len(documents)} documents to vector store (will replace existing documents with same ID)...")
+            
+            # upload_documents actually does upsert (replace if exists, insert if new)
+            # This replaces any existing document with the same ID
             result = self.search_client.upload_documents(documents)
             
             # Check for errors
             failed_docs = [doc for doc in result if not doc.succeeded]
             if failed_docs:
-                print(f"Failed to upload {len(failed_docs)} documents")
+                print(f"[WARNING] Failed to upload {len(failed_docs)} documents")
+                for failed in failed_docs[:5]:  # Show first 5 failures
+                    print(f"  - Failed document: {failed}")
                 return False
             
-            print(f"Successfully uploaded {len(documents)} documents")
+            successful_count = len(documents) - len(failed_docs)
+            print(f"[SUCCESS] Successfully upserted {successful_count} documents to vector store")
             return True
             
         except Exception as e:
             print(f"Error upserting documents: {e}")
+            import traceback
+            traceback.print_exc()
             return False
+    
+    def cleanup_stale_documents(self, valid_content_ids: List[str]) -> int:
+        """Remove documents from vector store that don't exist in the valid content_ids list"""
+        try:
+            print(f"Checking for stale documents in vector store (keeping {len(valid_content_ids)} valid IDs)...")
+            
+            # Get all documents from vector store
+            all_results = self.search_client.search(search_text="*", top=10000, select=["id", "content_id"])
+            
+            valid_ids_set = {cid.replace(" ", "_").replace(":", "_").replace("/", "_") for cid in valid_content_ids}
+            
+            stale_doc_ids = []
+            total_docs = 0
+            
+            for result in all_results:
+                total_docs += 1
+                doc_id = result.get("id")
+                content_id = result.get("content_id", "")
+                
+                # Check if this document's content_id is in our valid list
+                # Compare both the stored content_id and the ID format
+                is_valid = (
+                    content_id in valid_content_ids or 
+                    doc_id in valid_ids_set
+                )
+                
+                if not is_valid:
+                    stale_doc_ids.append({"id": doc_id})
+            
+            if stale_doc_ids:
+                print(f"Found {len(stale_doc_ids)} stale documents out of {total_docs} total, removing...")
+                delete_result = self.search_client.delete_documents(documents=stale_doc_ids)
+                failed_deletes = [doc for doc in delete_result if not doc.succeeded]
+                if failed_deletes:
+                    print(f"[WARNING] Failed to delete {len(failed_deletes)} stale documents")
+                else:
+                    print(f"[SUCCESS] Successfully removed {len(stale_doc_ids)} stale documents")
+                return len(stale_doc_ids) - len(failed_deletes)
+            else:
+                print(f"[SUCCESS] No stale documents found ({total_docs} total documents, all valid)")
+                return 0
+                
+        except Exception as e:
+            print(f"Error cleaning up stale documents: {e}")
+            import traceback
+            traceback.print_exc()
+            return 0
     
     def semantic_search(self, query: str, top_k: int = 15, days: Optional[int] = None) -> List[Dict[str, Any]]:
         """Perform semantic search with optional date filtering"""
-        try:
+        try:            
             # Build filter expression
             filter_expr = None
             if days:
                 cutoff_date = datetime.utcnow() - timedelta(days=days)
                 filter_expr = f"published_at ge {cutoff_date.isoformat()}Z"
             
-            # Perform text search for now
+            # Use wildcard search to make it more lenient - Azure Search text search can be strict
+            # Try exact search first, then fallback to wildcard if needed
+            search_text = query.strip()
+            
+            # If query is a single word or short, use wildcard for better matching
+            # Otherwise, search as-is but Azure will handle partial matches in searchable fields
+            if len(search_text.split()) == 1:
+                # Single word - add wildcard to match partial words
+                search_text = f"{search_text}*"
+            
+            print(f"Vector search: query='{query}', search_text='{search_text}', filter={filter_expr}, top_k={top_k}")
+            
+            # Perform text search
             results = self.search_client.search(
-                search_text=query,
+                search_text=search_text,
                 filter=filter_expr,
                 top=top_k,
-                include_total_count=True
+                include_total_count=True,
+                query_type="simple",  # Use simple query parser (more lenient than full)
+                search_mode="any"  # Match any term (more lenient than "all")
             )
             
             # Convert results to list of dictionaries
             search_results = []
+            result_count = 0
             for result in results:
+                result_count += 1
+                # Parse references from JSON strings back to dictionaries
+                references_list = []
+                refs_data = result.get("references", [])
+                if refs_data:
+                    for ref_str in refs_data:
+                        try:
+                            ref_dict = json.loads(ref_str)
+                            references_list.append(ref_dict)
+                        except (json.JSONDecodeError, TypeError):
+                            # If it's already a dict, use it directly
+                            if isinstance(ref_str, dict):
+                                references_list.append(ref_str)
+                
                 search_results.append({
-                    "content_id": result["content_id"],
-                    "title": result["title"],
-                    "summary": result["summary"],
-                    "source": result["source"],
-                    "type": result["type"],
-                    "published_at": result["published_at"],
+                    "content_id": result.get("content_id", ""),
+                    "title": result.get("title", ""),
+                    "summary": result.get("summary", ""),
+                    "tl_dr": result.get("tl_dr", ""),
+                    "why_it_matters": result.get("why_it_matters", ""),
+                    "source": result.get("source", ""),
+                    "type": result.get("type", ""),
+                    "published_at": result.get("published_at", ""),
                     "tags": result.get("tags", []),
                     "badges": result.get("badges", []),
+                    "references": references_list,
                     "snippet": result.get("snippet", ""),
                     "score": result.get("@search.score", 0.0)
                 })
             
-            return search_results
+            print(f"Vector search: returned {result_count} results (search_results list has {len(search_results)} items)")
+            
+            # If no results with exact/wildcard search, try a more lenient approach
+            if not search_results and len(query.split()) > 1:
+                # Multi-word query - try searching individual words
+                print(f"No results with full query, trying individual word search...")
+                words = query.split()[:3]  # Limit to first 3 words
+                for word in words:
+                    word_results = self.search_client.search(
+                        search_text=f"{word}*",
+                        filter=filter_expr,
+                        top=top_k,
+                        include_total_count=True,
+                        query_type="simple",
+                        search_mode="any"
+                    )
+                    # Add unique results (by content_id)
+                    seen_ids = {r.get("content_id") for r in search_results}
+                    for result in word_results:
+                        content_id = result.get("content_id")
+                        if content_id and content_id not in seen_ids:
+                            seen_ids.add(content_id)
+                            # Parse references from JSON strings back to dictionaries
+                            refs_list = []
+                            refs_data = result.get("references", [])
+                            if refs_data:
+                                for ref_str in refs_data:
+                                    try:
+                                        ref_dict = json.loads(ref_str)
+                                        refs_list.append(ref_dict)
+                                    except (json.JSONDecodeError, TypeError):
+                                        # If it's already a dict, use it directly
+                                        if isinstance(ref_str, dict):
+                                            refs_list.append(ref_str)
+                            
+                            search_results.append({
+                                "content_id": content_id,
+                                "title": result.get("title", ""),
+                                "summary": result.get("summary", ""),
+                                "tl_dr": result.get("tl_dr", ""),
+                                "why_it_matters": result.get("why_it_matters", ""),
+                                "source": result.get("source", ""),
+                                "type": result.get("type", ""),
+                                "published_at": result.get("published_at", ""),
+                                "tags": result.get("tags", []),
+                                "badges": result.get("badges", []),
+                                "references": refs_list,
+                                "snippet": result.get("snippet", ""),
+                                "score": result.get("@search.score", 0.0)
+                            })
+                            if len(search_results) >= top_k:
+                                break
+                    if len(search_results) >= top_k:
+                        break
+                
+                print(f"After word-by-word search: returned {len(search_results)} results")
+            
+            return search_results[:top_k]  # Ensure we don't exceed top_k
             
         except Exception as e:
             print(f"Error performing semantic search: {e}")
+            import traceback
+            traceback.print_exc()
             return []
     
     def _get_query_embedding(self, query: str) -> List[float]:
         """Get embedding for search query"""
         from backend.summarizer import summarizer
         return summarizer.embed_text(query)
+    
+    def reindex_all_summarized_articles(self) -> Dict[str, Any]:
+        """Re-index all summarized articles from database to vector store"""
+        try:
+            from backend.database import db_manager
+            from backend.summarizer import summarizer
+            
+            print("Re-indexing all summarized articles from database to vector store...")
+            
+            # Get all summarized articles from database
+            with db_manager.get_session() as session:
+                from backend.models import Article
+                articles = session.query(Article).filter(
+                    Article.is_summarized == True
+                ).all()
+            
+            if not articles:
+                print("No summarized articles found in database")
+                return {'success': True, 'indexed': 0, 'message': 'No articles to index'}
+            
+            print(f"Found {len(articles)} summarized articles, converting to cards and indexing...")
+            
+            # Convert articles to cards
+            cards = []
+            embeddings = []
+            indexed_count = 0
+            failed_count = 0
+            
+            for article in articles:
+                try:
+                    # Convert Article to Card using to_card() method
+                    card = article.to_card()
+                    if not card:
+                        print(f"Skipping article {article.content_id} - to_card() returned None")
+                        failed_count += 1
+                        continue
+                    
+                    cards.append(card)
+                    
+                    # Generate embedding
+                    embedding = summarizer.embed_text(f"{card.title} {card.summary}")
+                    embeddings.append(embedding)
+                    indexed_count += 1
+                    
+                except Exception as e:
+                    print(f"Error processing article {article.content_id}: {e}")
+                    failed_count += 1
+                    continue
+            
+            # Index all cards to vector store
+            if cards and embeddings:
+                print(f"Upserting {len(cards)} articles to vector store...")
+                success = self.upsert_documents(cards, embeddings)
+                
+                if success:
+                    print(f"[SUCCESS] Successfully re-indexed {indexed_count} articles")
+                    return {
+                        'success': True,
+                        'indexed': indexed_count,
+                        'failed': failed_count,
+                        'message': f'Re-indexed {indexed_count} articles, {failed_count} failed'
+                    }
+                else:
+                    print(f"[WARNING] Failed to index articles to vector store")
+                    return {
+                        'success': False,
+                        'indexed': 0,
+                        'failed': failed_count,
+                        'message': 'Failed to upload documents to vector store'
+                    }
+            else:
+                print(f"No cards to index (processed {indexed_count}, failed {failed_count})")
+                return {
+                    'success': False,
+                    'indexed': indexed_count,
+                    'failed': failed_count,
+                    'message': f'No cards generated - {failed_count} failed'
+                }
+                
+        except Exception as e:
+            print(f"Error re-indexing articles: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                'success': False,
+                'indexed': 0,
+                'failed': 0,
+                'message': f'Error: {str(e)}'
+            }
+    
+    def get_document_count(self) -> int:
+        """Get total number of documents in the index"""
+        try:
+            results = self.search_client.search(
+                search_text="*",
+                top=1,
+                include_total_count=True
+            )
+            # The results iterator has a get_count() method or we can check the first result
+            for result in results:
+                # Just accessing results populates the count
+                pass
+            # Try to get count from response - this may vary by SDK version
+            # For now, do a quick count search
+            count_results = self.search_client.search(search_text="*", top=1000)
+            count = sum(1 for _ in count_results)
+            return count
+        except Exception as e:
+            print(f"Error getting document count: {e}")
+            return 0
 
 # Global vector store manager
 vector_store = VectorStoreManager()

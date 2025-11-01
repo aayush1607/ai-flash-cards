@@ -6,6 +6,8 @@ from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 import logging
 import os
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 from backend.config import config
 from backend.models import Card, TopicFeedResponse, MorningBriefResponse
@@ -50,15 +52,25 @@ async def get_morning_brief():
             days=7
         )
         
-        if not articles:
-            # Fallback to any recent articles if none in last 7 days
-            articles = db_manager.get_recent_articles(
-                limit=config.morning_brief_top_n,
-                days=None
+        # If we don't have enough articles in the last 7 days, fill with older articles
+        # Exclude Hacker News only in the last resort tier (raw articles)
+        if len(articles) < config.morning_brief_top_n:
+            # Get additional articles without date restriction, exclude HN in last resort
+            additional_articles = db_manager.get_recent_articles(
+                limit=config.morning_brief_top_n - len(articles),
+                days=None,
+                exclude_hacker_news=True  # Filter HN only in last resort tier
             )
+            # Deduplicate by content_id and combine
+            existing_ids = {a.content_id for a in articles}
+            for article in additional_articles:
+                if article.content_id not in existing_ids:
+                    articles.append(article)
+                    if len(articles) >= config.morning_brief_top_n:
+                        break
         
         return MorningBriefResponse(
-            items=articles,
+            items=articles[:config.morning_brief_top_n],
             total_count=len(articles)
         )
         
@@ -86,55 +98,94 @@ async def get_topic_feed(
         else:
             raise HTTPException(status_code=400, detail="Invalid timeframe. Use: 24h, 7d, 30d, all")
         
-        # Try vector search first, fallback to database search
-        print(f"Using vector search for: {q}")
+        # Try vector search first with timeout, fallback to database search
+        print(f"Attempting vector search for: {q} (with 2.5s timeout)")
+        search_results = []
+        
         try:
-            # Use vector search
-            vector_results = vector_store.semantic_search(
-                query=q,
-                top_k=config.topic_feed_top_k,
-                days=timeframe_days
-            )
-            print(f"Vector search returned {len(vector_results)} results")
-            
-            if vector_results:
-                # Convert vector search results to Card objects
-                search_results = []
-                for i, result in enumerate(vector_results):
-                    try:
-                        # Create Card object from vector search result
-                        from backend.models import Card, Reference
-                        card = Card(
-                            content_id=result.get('content_id', ''),
-                            type=result.get('type', 'blog'),
-                            title=result.get('title', ''),
-                            source=result.get('source', ''),
-                            published_at=datetime.fromisoformat(result.get('published_at', '').replace('Z', '+00:00')),
-                            tl_dr=result.get('tl_dr', ''),
-                            summary=result.get('summary', ''),
-                            why_it_matters=result.get('why_it_matters', ''),
-                            tags=result.get('tags', []),
-                            badges=result.get('badges', []),
-                            references=[Reference(**ref) for ref in result.get('references', [])],
-                            snippet=result.get('snippet', ''),
-                            synthesis_failed=result.get('synthesis_failed', False)
-                        )
-                        search_results.append(card)
-                        print(f"Successfully converted result {i+1}: {card.title}")
-                    except Exception as card_error:
-                        print(f"Error converting result {i+1}: {card_error}")
-                        print(f"Result data: {result}")
-                        continue
-                print(f"Converted to {len(search_results)} Card objects")
-            else:
-                # No vector results, fallback to database search
-                print("No vector results, falling back to database search")
+            # Run vector search in thread pool with timeout (2.5 seconds)
+            # This prevents blocking and allows fast fallback
+            try:
+                # Use asyncio.to_thread if available (Python 3.9+), otherwise use run_in_executor
+                try:
+                    vector_results = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            vector_store.semantic_search,
+                            q,
+                            config.topic_feed_top_k,
+                            timeframe_days
+                        ),
+                        timeout=2.5  # 2.5 second timeout
+                    )
+                except AttributeError:
+                    # Fallback for Python < 3.9
+                    loop = asyncio.get_event_loop()
+                    executor = ThreadPoolExecutor(max_workers=1)
+                    vector_results = await asyncio.wait_for(
+                        loop.run_in_executor(
+                            executor,
+                            vector_store.semantic_search,
+                            q,
+                            config.topic_feed_top_k,
+                            timeframe_days
+                        ),
+                        timeout=2.5  # 2.5 second timeout
+                    )
+                
+                print(f"Vector search completed in time, returned {len(vector_results)} results")
+                
+                if vector_results:
+                    # Convert vector search results to Card objects
+                    for i, result in enumerate(vector_results):
+                        try:
+                            # Create Card object from vector search result
+                            from backend.models import Reference
+                            # Ensure required string fields are not None
+                            tl_dr = result.get('tl_dr') or ''
+                            why_it_matters = result.get('why_it_matters') or ''
+                            summary = result.get('summary') or ''
+                            title = result.get('title') or ''
+                            
+                            card = Card(
+                                content_id=result.get('content_id', ''),
+                                type=result.get('type', 'blog'),
+                                title=title,
+                                source=result.get('source', ''),
+                                published_at=datetime.fromisoformat(result.get('published_at', '').replace('Z', '+00:00')),
+                                tl_dr=tl_dr,
+                                summary=summary,
+                                why_it_matters=why_it_matters,
+                                tags=result.get('tags', []) or [],
+                                badges=result.get('badges', []) or [],
+                                references=[Reference(**ref) for ref in result.get('references', []) or []],
+                                snippet=result.get('snippet') or None,
+                                synthesis_failed=result.get('synthesis_failed', False)
+                            )
+                            search_results.append(card)
+                        except Exception as card_error:
+                            print(f"Error converting result {i+1}: {card_error}")
+                            continue
+                    print(f"Converted to {len(search_results)} Card objects")
+                else:
+                    # No vector results, fallback to database search
+                    print("No vector results, falling back to database search")
+                    search_results = db_manager.search_articles(
+                        query=q,
+                        limit=config.topic_feed_top_k,
+                        days=timeframe_days
+                    )
+                    print(f"Database search returned {len(search_results)} results")
+                    
+            except asyncio.TimeoutError:
+                print(f"Vector search timed out after 2.5s, falling back to database search")
+                # Immediately fallback to database search
                 search_results = db_manager.search_articles(
                     query=q,
                     limit=config.topic_feed_top_k,
                     days=timeframe_days
                 )
                 print(f"Database search returned {len(search_results)} results")
+                
         except Exception as e:
             print(f"Vector search failed: {e}, falling back to database search")
             # Fallback to database search
@@ -373,6 +424,9 @@ async def dev_get_stats():
                 "article_count": db_manager.get_article_count(),
                 "recent_articles_7d": len(db_manager.get_recent_articles(limit=1000, days=7))
             },
+            "vector_store": {
+                "document_count": vector_store.get_document_count()
+            },
             "scheduler": daily_scheduler.get_status(),
             "config": {
                 "rss_sources": 3,
@@ -384,6 +438,25 @@ async def dev_get_stats():
     except Exception as e:
         logger.error(f"Error getting dev stats: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get dev stats: {str(e)}")
+
+@app.post("/api/dev/reindex-vector-store")
+async def dev_reindex_vector_store():
+    """Development endpoint to re-index all summarized articles from database to vector store"""
+    try:
+        logger.info("Manual vector store re-indexing triggered via API")
+        
+        # Run re-indexing synchronously (it's already fast with small batches)
+        result = vector_store.reindex_all_summarized_articles()
+        
+        return {
+            "success": result.get('success', False),
+            "message": result.get('message', 'Re-indexing completed'),
+            "indexed": result.get('indexed', 0),
+            "failed": result.get('failed', 0)
+        }
+    except Exception as e:
+        logger.error(f"Error triggering re-indexing: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to trigger re-indexing: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn

@@ -1,5 +1,7 @@
 import json
+import re
 from typing import List, Tuple, Optional, Dict, Any
+from urllib.parse import urlparse
 from openai import AzureOpenAI
 from backend.config import config
 from backend.models import Card, Reference
@@ -16,6 +18,131 @@ class Summarizer:
         self.deployment_name = config.azure_openai_deployment_name
         self.embedding_deployment_name = config.azure_openai_embedding_deployment_name
     
+    def _normalize_url(self, url: str) -> str:
+        """Normalize URL for comparison (removes trailing slashes, converts to lowercase, etc.)"""
+        if not url:
+            return ""
+        
+        url = url.strip()
+        
+        # Parse URL
+        try:
+            parsed = urlparse(url)
+            
+            # Normalize scheme to lowercase
+            scheme = parsed.scheme.lower()
+            
+            # Normalize netloc to lowercase and remove www. prefix for comparison
+            netloc = parsed.netloc.lower()
+            if netloc.startswith('www.'):
+                netloc = netloc[4:]
+            
+            # Normalize path (remove trailing slash, lowercase)
+            path = parsed.path.rstrip('/').lower()
+            
+            # Normalize query (sort parameters for consistency)
+            query = parsed.query
+            if query:
+                # Sort query parameters
+                params = sorted(query.split('&'))
+                query = '&'.join(params)
+            
+            # Reconstruct normalized URL
+            normalized = f"{scheme}://{netloc}{path}"
+            if query:
+                normalized += f"?{query}"
+            if parsed.fragment:
+                normalized += f"#{parsed.fragment.lower()}"
+            
+            return normalized
+        except Exception:
+            # If parsing fails, just normalize basic things
+            return url.lower().rstrip('/')
+    
+    def _urls_are_similar(self, url1: str, url2: str) -> bool:
+        """Check if two URLs are essentially the same (handles variations)"""
+        if not url1 or not url2:
+            return False
+        
+        # Normalize both URLs
+        norm1 = self._normalize_url(url1)
+        norm2 = self._normalize_url(url2)
+        
+        # Exact match after normalization
+        if norm1 == norm2:
+            return True
+        
+        # Check if one is a prefix of the other (handles trailing slash differences)
+        # e.g., "https://example.com" vs "https://example.com/"
+        if norm1.rstrip('/') == norm2.rstrip('/'):
+            return True
+        
+        # Check domain similarity (handle www vs non-www)
+        try:
+            parsed1 = urlparse(url1)
+            parsed2 = urlparse(url2)
+            
+            netloc1 = parsed1.netloc.lower().lstrip('www.')
+            netloc2 = parsed2.netloc.lower().lstrip('www.')
+            
+            # If domains match and paths are very similar
+            if netloc1 == netloc2:
+                path1 = parsed1.path.lower().rstrip('/')
+                path2 = parsed2.path.lower().rstrip('/')
+                
+                # Exact path match (after normalization)
+                if path1 == path2:
+                    return True
+                
+                # One path is empty and other is just "/"
+                if (path1 == '' and path2 == '/') or (path1 == '/' and path2 == ''):
+                    return True
+        except Exception:
+            pass
+        
+        return False
+    
+    def _is_valid_url(self, url: str) -> bool:
+        """Validate if URL is valid and not a placeholder"""
+        if not url or not isinstance(url, str):
+            return False
+        
+        url = url.strip()
+        
+        # Check for placeholder patterns
+        placeholder_patterns = [
+            r'link_to_',
+            r'placeholder',
+            r'example\.com',
+            r'\.\.\.',
+            r'https?://link',
+            r'https?://url',
+            r'https?://www\.example',
+            r'REPLACE',
+            r'YOUR_'
+        ]
+        
+        for pattern in placeholder_patterns:
+            if re.search(pattern, url, re.IGNORECASE):
+                return False
+        
+        # Must start with http:// or https://
+        if not url.startswith(('http://', 'https://')):
+            return False
+        
+        # Parse URL to check if it's well-formed
+        try:
+            parsed = urlparse(url)
+            # Must have a valid netloc (domain)
+            if not parsed.netloc:
+                return False
+            # Must not have invalid characters
+            if ' ' in url:
+                return False
+            return True
+        except Exception:
+            return False
+    
     def summarize_content(self, title: str, raw_text: str, source: str, url: str) -> Tuple[str, str, str, List[str], List[Reference]]:
         """Summarize content and extract metadata"""
         try:
@@ -30,7 +157,17 @@ You are an AI research analyst. Analyze this AI research/news content and provid
 2. Summary: 2-3 concise, factual sentences explaining what this is about
 3. Why it matters: One short sentence explaining the significance/impact
 4. Tags: 1-3 topical tags (e.g., "transformer", "computer-vision", "efficiency")
-5. References: Extract any relevant links (papers, code, datasets) from the content
+5. References: Extract ONLY real, actual URLs from the content (papers, code repositories, datasets, documentation)
+
+IMPORTANT for References:
+- ONLY include URLs that actually appear in the content text
+- Extract full, complete URLs (e.g., "https://arxiv.org/abs/2023.12345" or "https://github.com/user/repo")
+- DO NOT create placeholder URLs like "https://link_to_..." or "https://example.com/..."
+- DO NOT make up or invent URLs that are not in the content
+- If you find real URLs in the content, include them with descriptive labels
+- If no real URLs are found, return an empty references array []
+
+Source URL: {url}
 
 Content:
 {content}
@@ -42,8 +179,8 @@ Respond in JSON format:
     "why_it_matters": "Why this is significant...",
     "tags": ["tag1", "tag2", "tag3"],
     "references": [
-        {{"label": "Paper", "url": "https://..."}},
-        {{"label": "Code", "url": "https://..."}}
+        {{"label": "Paper", "url": "https://arxiv.org/abs/..."}},
+        {{"label": "GitHub Repository", "url": "https://github.com/..."}}
     ]
 }}
 """
@@ -71,18 +208,29 @@ Respond in JSON format:
             why_it_matters = result.get("why_it_matters", "Research significance not determined.")
             tags = result.get("tags", [])[:3]  # Limit to 3 tags
             
-            # Process references
+            # Process references - validate URLs and filter out invalid ones
             references = []
             for ref in result.get("references", []):
                 if isinstance(ref, dict) and "url" in ref:
-                    references.append(Reference(
-                        label=ref.get("label", "Reference"),
-                        url=ref["url"]
-                    ))
+                    ref_url = ref["url"]
+                    # Only add if URL is valid
+                    if self._is_valid_url(ref_url):
+                        references.append(Reference(
+                            label=ref.get("label", "Reference"),
+                            url=ref_url
+                        ))
+                    else:
+                        print(f"Skipping invalid reference URL: {ref_url}")
             
-            # Add source reference if no others found
-            if not references and url:
-                references.append(Reference(label="Source", url=url))
+            # Always add source URL as a reference (if valid) - ensures at least one valid link
+            source_url_valid = url and self._is_valid_url(url)
+            if source_url_valid:
+                # Check if source URL is already in references (using smart matching)
+                source_already_added = any(self._urls_are_similar(ref.url, url) for ref in references)
+                if not source_already_added:
+                    references.append(Reference(label="Source", url=url))
+            elif url:
+                print(f"Skipping invalid source URL: {url}")
             
             return tl_dr, summary, why_it_matters, tags, references
             
@@ -105,9 +253,9 @@ Respond in JSON format:
         why_it_matters = "Research significance not determined."
         tags = []
         
-        # Basic reference
+        # Basic reference (validate URL)
         references = []
-        if url:
+        if url and self._is_valid_url(url):
             references.append(Reference(label="Source", url=url))
         
         return tl_dr, summary, why_it_matters, tags, references
@@ -149,13 +297,13 @@ Respond in JSON format:
             result = json.loads(response.choices[0].message.content)
             
             topic_summary = result.get("topic_summary", f"Recent developments in {topic}.")
-            why_it_matters = result.get("why_it_matters", "This topic is significant for AI research.")
+            why_it_matters = result.get("why_it_matters", "Significance not determined.")
             
             return topic_summary, why_it_matters
             
         except Exception as e:
             print(f"Error generating topic summary: {e}")
-            return f"Recent developments in {topic}.", "This topic is significant for AI research."
+            return f"Recent developments in {topic}.", "Significance not determined."
     
     def embed_text(self, text: str) -> List[float]:
         """Generate embedding for text"""
