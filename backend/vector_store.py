@@ -4,9 +4,10 @@ from typing import List, Dict, Any, Optional
 from azure.search.documents import SearchClient
 from azure.search.documents.indexes import SearchIndexClient
 from azure.search.documents.indexes.models import (
-    SearchIndex, SimpleField, SearchFieldDataType, 
+    SearchIndex, SimpleField, SearchFieldDataType, SearchField,
     VectorSearch, HnswAlgorithmConfiguration, VectorSearchProfile
 )
+from azure.search.documents.models import VectorizedQuery
 from azure.core.credentials import AzureKeyCredential
 from backend.config import config
 from backend.models import Card
@@ -40,18 +41,27 @@ class VectorStoreManager:
             # Check if index exists and verify it has required fields
             existing_index = self.index_client.get_index(self.index_name)
             
-            # Check if index has new required fields (tl_dr, why_it_matters, references)
+            # Check if index has new required fields (tl_dr, why_it_matters, references, embedding)
             field_names = {field.name for field in existing_index.fields}
-            required_fields = {'tl_dr', 'why_it_matters', 'references'}
+            required_fields = {'tl_dr', 'why_it_matters', 'references', 'embedding'}
             missing_fields = required_fields - field_names
             
-            if missing_fields:
-                print(f"Index {self.index_name} exists but is missing fields: {missing_fields}")
+            # Also check if vector_search is configured
+            has_vector_search = (
+                existing_index.vector_search is not None and
+                len(existing_index.vector_search.profiles) > 0
+            )
+            
+            if missing_fields or not has_vector_search:
+                if missing_fields:
+                    print(f"Index {self.index_name} exists but is missing fields: {missing_fields}")
+                if not has_vector_search:
+                    print(f"Index {self.index_name} exists but is missing vector search configuration")
                 print("Azure Search doesn't support schema updates. The index needs to be recreated.")
                 print("To fix: Run vector_store.recreate_index_with_schema() or delete and recreate manually")
                 return
             
-            print(f"Index {self.index_name} already exists with correct schema")
+            print(f"Index {self.index_name} already exists with correct schema and HNSW vector search")
         except Exception:
             # Create index
             print(f"Creating index {self.index_name}")
@@ -154,12 +164,36 @@ class VectorStoreManager:
                 SimpleField(name="tags", type=SearchFieldDataType.Collection(SearchFieldDataType.String), filterable=True),
                 SimpleField(name="badges", type=SearchFieldDataType.Collection(SearchFieldDataType.String), filterable=True),
                 SimpleField(name="references", type=SearchFieldDataType.Collection(SearchFieldDataType.String)),  # Store as array of JSON strings
-                SearchableField(name="snippet", type=SearchFieldDataType.String)
-            ]
+                SearchableField(name="snippet", type=SearchFieldDataType.String),
+                # Vector field for embeddings (3072 dimensions for text-embedding-3-large default)
+                SearchField(
+                    name="embedding",
+                    type=SearchFieldDataType.Collection(SearchFieldDataType.Single),
+                    vector_search_dimensions=3072,
+                    vector_search_profile_name="vector-profile",
+                    searchable=True
+                )
+            ],
+            # Configure HNSW vector search algorithm
+            vector_search=VectorSearch(
+                algorithms=[
+                    HnswAlgorithmConfiguration(
+                        name="hnsw-config",
+                        kind="hnsw",
+                        parameters=None  # Use default HNSW parameters
+                    )
+                ],
+                profiles=[
+                    VectorSearchProfile(
+                        name="vector-profile",
+                        algorithm_configuration_name="hnsw-config"
+                    )
+                ]
+            )
         )
         
         self.index_client.create_index(index)
-        print(f"Index {self.index_name} created successfully")
+        print(f"Index {self.index_name} created successfully with HNSW vector search")
     
     def upsert_documents(self, cards: List[Card], embeddings: List[List[float]] = None) -> bool:
         """Upsert documents to the search index (replaces existing documents with same ID)"""
@@ -169,7 +203,7 @@ class VectorStoreManager:
                 return True
             
             documents = []
-            for card in cards:
+            for idx, card in enumerate(cards):
                 # Create a consistent document ID based on content_id
                 # Use content_id directly as ID, but sanitize it
                 safe_id = card.content_id.replace(" ", "_").replace(":", "_").replace("/", "_")
@@ -183,6 +217,14 @@ class VectorStoreManager:
                             "url": ref.url
                         }
                         references_json.append(json.dumps(ref_dict))
+                
+                # Get embedding for this card (if provided)
+                embedding_value = None
+                if embeddings and idx < len(embeddings):
+                    embedding_value = embeddings[idx]
+                elif embeddings and len(embeddings) == 1:
+                    # If only one embedding provided, use it for all cards
+                    embedding_value = embeddings[0]
                 
                 doc = {
                     "id": safe_id,
@@ -199,6 +241,11 @@ class VectorStoreManager:
                     "references": references_json,
                     "snippet": card.snippet or ""
                 }
+                
+                # Add embedding if available
+                if embedding_value:
+                    doc["embedding"] = embedding_value
+                
                 documents.append(doc)
             
             print(f"Upserting {len(documents)} documents to vector store (will replace existing documents with same ID)...")
@@ -273,7 +320,7 @@ class VectorStoreManager:
             return 0
     
     def semantic_search(self, query: str, top_k: int = 15, days: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Perform semantic search with optional date filtering"""
+        """Perform semantic search using HNSW vector search with optional date filtering"""
         try:            
             # Build filter expression
             filter_expr = None
@@ -281,26 +328,26 @@ class VectorStoreManager:
                 cutoff_date = datetime.utcnow() - timedelta(days=days)
                 filter_expr = f"published_at ge {cutoff_date.isoformat()}Z"
             
-            # Use wildcard search to make it more lenient - Azure Search text search can be strict
-            # Try exact search first, then fallback to wildcard if needed
-            search_text = query.strip()
+            # Generate embedding for the query using HNSW vector search
+            query_embedding = self._get_query_embedding(query)
             
-            # If query is a single word or short, use wildcard for better matching
-            # Otherwise, search as-is but Azure will handle partial matches in searchable fields
-            if len(search_text.split()) == 1:
-                # Single word - add wildcard to match partial words
-                search_text = f"{search_text}*"
+            print(f"Vector search (HNSW): query='{query}', filter={filter_expr}, top_k={top_k}, embedding_dim={len(query_embedding)}")
             
-            print(f"Vector search: query='{query}', search_text='{search_text}', filter={filter_expr}, top_k={top_k}")
+            # Create vector query for HNSW search
+            vector_query = VectorizedQuery(
+                vector=query_embedding,
+                k_nearest_neighbors=top_k,
+                fields="embedding"
+            )
             
-            # Perform text search
+            # Perform pure vector search using HNSW algorithm
+            # HNSW provides efficient approximate nearest neighbor search for semantic similarity
             results = self.search_client.search(
-                search_text=search_text,
+                search_text="*",  # Empty query - we're only using vector search
+                vector_queries=[vector_query],
                 filter=filter_expr,
                 top=top_k,
-                include_total_count=True,
-                query_type="simple",  # Use simple query parser (more lenient than full)
-                search_mode="any"  # Match any term (more lenient than "all")
+                include_total_count=True
             )
             
             # Convert results to list of dictionaries
@@ -337,62 +384,7 @@ class VectorStoreManager:
                     "score": result.get("@search.score", 0.0)
                 })
             
-            print(f"Vector search: returned {result_count} results (search_results list has {len(search_results)} items)")
-            
-            # If no results with exact/wildcard search, try a more lenient approach
-            if not search_results and len(query.split()) > 1:
-                # Multi-word query - try searching individual words
-                print(f"No results with full query, trying individual word search...")
-                words = query.split()[:3]  # Limit to first 3 words
-                for word in words:
-                    word_results = self.search_client.search(
-                        search_text=f"{word}*",
-                        filter=filter_expr,
-                        top=top_k,
-                        include_total_count=True,
-                        query_type="simple",
-                        search_mode="any"
-                    )
-                    # Add unique results (by content_id)
-                    seen_ids = {r.get("content_id") for r in search_results}
-                    for result in word_results:
-                        content_id = result.get("content_id")
-                        if content_id and content_id not in seen_ids:
-                            seen_ids.add(content_id)
-                            # Parse references from JSON strings back to dictionaries
-                            refs_list = []
-                            refs_data = result.get("references", [])
-                            if refs_data:
-                                for ref_str in refs_data:
-                                    try:
-                                        ref_dict = json.loads(ref_str)
-                                        refs_list.append(ref_dict)
-                                    except (json.JSONDecodeError, TypeError):
-                                        # If it's already a dict, use it directly
-                                        if isinstance(ref_str, dict):
-                                            refs_list.append(ref_str)
-                            
-                            search_results.append({
-                                "content_id": content_id,
-                                "title": result.get("title", ""),
-                                "summary": result.get("summary", ""),
-                                "tl_dr": result.get("tl_dr", ""),
-                                "why_it_matters": result.get("why_it_matters", ""),
-                                "source": result.get("source", ""),
-                                "type": result.get("type", ""),
-                                "published_at": result.get("published_at", ""),
-                                "tags": result.get("tags", []),
-                                "badges": result.get("badges", []),
-                                "references": refs_list,
-                                "snippet": result.get("snippet", ""),
-                                "score": result.get("@search.score", 0.0)
-                            })
-                            if len(search_results) >= top_k:
-                                break
-                    if len(search_results) >= top_k:
-                        break
-                
-                print(f"After word-by-word search: returned {len(search_results)} results")
+            print(f"Vector search (HNSW): returned {result_count} results (search_results list has {len(search_results)} items)")
             
             return search_results[:top_k]  # Ensure we don't exceed top_k
             
@@ -470,7 +462,7 @@ class VectorStoreManager:
                     cards.append(card)
                     
                     # Generate embedding
-                    embedding = summarizer.embed_text(f"{card.title} {card.summary}")
+                    embedding = summarizer.embed_text(f"{card.title} {card.tl_dr} {card.summary} {card.why_it_matters}")
                     embeddings.append(embedding)
                     indexed_count += 1
                     

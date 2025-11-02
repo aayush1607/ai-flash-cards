@@ -316,7 +316,7 @@ Respond in JSON format:
         except Exception as e:
             print(f"Error generating embedding: {e}")
             # Return zero vector as fallback
-            return [0.0] * 1536
+            return [0.0] * 3072
     
     def extract_badges(self, content: str, references: List[Reference]) -> List[str]:
         """Extract badges based on content analysis"""

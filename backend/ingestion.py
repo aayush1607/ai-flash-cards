@@ -465,7 +465,7 @@ class RSSIngestionPipeline:
                         
                         # Generate embedding for vector store
                         try:
-                            embedding = summarizer.embed_text(f"{card.title} {card.summary}")
+                            embedding = summarizer.embed_text(f"{card.title} {card.tl_dr} {card.summary} {card.why_it_matters}")
                             embeddings.append(embedding)
                             processed_cards.append(card)
                         except Exception as e:
